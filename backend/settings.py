@@ -29,7 +29,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-fallback-key-change-i
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.100.13', '.ngrok-free.app', '.ngrok.io', '.ngrok.app', '.trycloudflare.com', 'feed-pentium-considerable-compressed.trycloudflare.com']
+ALLOWED_HOSTS = ['*']
 
 # URL Configuration
 APPEND_SLASH = True

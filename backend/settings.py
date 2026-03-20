@@ -140,7 +140,7 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "https://throughout-afford-aware-ipod.trycloudflare.com",
+    "https://cornflourfrontend.vercel.app",
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False

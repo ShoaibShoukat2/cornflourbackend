@@ -439,3 +439,32 @@ def reject_package_payment(request, payment_id):
         return Response({'message': 'Package rejected'})
     except PackagePayment.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def edit_user(request, user_id):
+    from decimal import Decimal
+    try:
+        user = User.objects.get(id=user_id)
+        
+        if 'username' in request.data:
+            user.username = request.data['username']
+        if 'email' in request.data:
+            user.email = request.data['email']
+        if 'password' in request.data and request.data['password']:
+            user.set_password(request.data['password'])
+        user.save()
+
+        # Update wallet balance if provided
+        if 'balance' in request.data:
+            wallet, _ = Wallet.objects.get_or_create(user=user)
+            new_balance = Decimal(str(request.data['balance']))
+            wallet.main_balance = new_balance
+            wallet.save()
+
+        return Response({'message': 'User updated successfully'})
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=404)
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)

@@ -441,26 +441,74 @@ def reject_package_payment(request, payment_id):
         return Response({'error': 'Not found'}, status=404)
 
 
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def get_user_detail(request, user_id):
+    try:
+        user = User.objects.get(id=user_id)
+        try:
+            wallet = user.wallet
+        except:
+            from wallet.models import Wallet
+            wallet, _ = Wallet.objects.get_or_create(user=user)
+
+        from administration.models import PackagePayment
+        package = PackagePayment.objects.filter(user=user, status='approved').first()
+        total_team = User.objects.filter(referred_by=user).count()
+        tx_count = Transaction.objects.filter(user=user).count()
+
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'phone': user.phone,
+            'level': user.level,
+            'points': user.points,
+            'referral_code': user.referral_code,
+            'is_active': user.is_active,
+            'is_blocked': user.is_blocked,
+            'block_reason': user.block_reason,
+            'two_factor_enabled': user.two_factor_enabled,
+            'is_email_verified': user.is_email_verified,
+            'created_at': user.created_at,
+            'last_activity': user.last_activity,
+            'has_package': package is not None,
+            'total_team': total_team,
+            'transaction_count': tx_count,
+            'wallet': {
+                'main_balance': float(wallet.main_balance),
+                'bonus_balance': float(wallet.bonus_balance),
+                'pending_balance': float(wallet.pending_balance),
+                'total_earned': float(wallet.total_earned),
+                'total_withdrawn': float(wallet.total_withdrawn),
+            }
+        })
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=404)
+
+
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def edit_user(request, user_id):
     from decimal import Decimal
     try:
         user = User.objects.get(id=user_id)
-        
+
         if 'username' in request.data:
             user.username = request.data['username']
         if 'email' in request.data:
             user.email = request.data['email']
+        if 'phone' in request.data:
+            user.phone = request.data['phone']
+        if 'level' in request.data:
+            user.level = int(request.data['level'])
         if 'password' in request.data and request.data['password']:
             user.set_password(request.data['password'])
         user.save()
 
-        # Update wallet balance if provided
         if 'balance' in request.data:
             wallet, _ = Wallet.objects.get_or_create(user=user)
-            new_balance = Decimal(str(request.data['balance']))
-            wallet.main_balance = new_balance
+            wallet.main_balance = Decimal(str(request.data['balance']))
             wallet.save()
 
         return Response({'message': 'User updated successfully'})

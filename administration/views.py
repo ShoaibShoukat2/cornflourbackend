@@ -443,6 +443,26 @@ def reject_package_payment(request, payment_id):
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
+def get_user_withdrawals(request, user_id):
+    try:
+        user = User.objects.get(id=user_id)
+        withdrawals = Withdrawal.objects.filter(user=user).order_by('-created_at')[:20]
+        data = [{
+            'id': w.id,
+            'amount': float(w.amount),
+            'payment_method': w.payment_method,
+            'payment_details': w.payment_details,
+            'status': w.status,
+            'admin_note': w.admin_note,
+            'created_at': w.created_at,
+        } for w in withdrawals]
+        return Response(data)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=404)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
 def get_user_detail(request, user_id):
     try:
         user = User.objects.get(id=user_id)

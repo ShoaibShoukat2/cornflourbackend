@@ -37,7 +37,7 @@ def create_withdrawal(request):
         amount = serializer.validated_data['amount']
         
         if amount < MINIMUM_WITHDRAWAL:
-            return Response({'error': f'Minimum withdrawal is ${MINIMUM_WITHDRAWAL}'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Minimum withdrawal is Rs 500'}, status=status.HTTP_400_BAD_REQUEST)
         
         if wallet.main_balance < amount:
             return Response({'error': 'Insufficient balance'}, status=status.HTTP_400_BAD_REQUEST)

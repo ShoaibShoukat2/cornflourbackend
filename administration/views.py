@@ -219,7 +219,7 @@ def add_bonus_to_user(request, user_id):
             return Response({'error': 'Invalid amount'}, status=400)
         
         wallet = user.wallet
-        wallet.bonus_balance += amount
+        wallet.main_balance += amount
         wallet.total_earned += amount
         wallet.save()
         

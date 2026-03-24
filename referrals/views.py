@@ -18,7 +18,7 @@ def referral_stats(request):
         'total_referrals': total_referrals,
         'total_earnings': total_earnings,
         'referral_code': user.referral_code,
-        'referral_link': f'https://cornflour.pythonanywhere.com/register?ref={user.referral_code}'
+        'referral_link': f'https://cornflourfrontend.vercel.app/register?ref={user.referral_code}'
     }
     
     serializer = ReferralStatsSerializer(data)

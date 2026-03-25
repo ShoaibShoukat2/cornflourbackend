@@ -29,4 +29,10 @@ urlpatterns = [
     path('package-payments/', views.list_package_payments, name='list_package_payments'),
     path('approve-package/<int:payment_id>/', views.approve_package_payment, name='approve_package_payment'),
     path('reject-package/<int:payment_id>/', views.reject_package_payment, name='reject_package_payment'),
+
+    # Task Management
+    path('tasks/', views.admin_list_tasks, name='admin_list_tasks'),
+    path('tasks/create/', views.admin_create_task, name='admin_create_task'),
+    path('tasks/edit/<int:task_id>/', views.admin_edit_task, name='admin_edit_task'),
+    path('tasks/delete/<int:task_id>/', views.admin_delete_task, name='admin_delete_task'),
 ]

@@ -536,3 +536,82 @@ def edit_user(request, user_id):
         return Response({'error': 'User not found'}, status=404)
     except Exception as e:
         return Response({'error': str(e)}, status=400)
+
+
+# ── Admin Task Management ──────────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def admin_list_tasks(request):
+    from tasks.models import Task
+    tasks = Task.objects.all().order_by('-created_at')
+    data = [{
+        'id': t.id,
+        'title': t.title,
+        'description': t.description,
+        'task_type': t.task_type,
+        'reward': float(t.reward),
+        'time_required': t.time_required,
+        'url': t.url,
+        'verification_code': t.verification_code,
+        'is_active': t.is_active,
+        'max_completions': t.max_completions,
+        'current_completions': t.current_completions,
+        'created_at': t.created_at,
+    } for t in tasks]
+    return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def admin_create_task(request):
+    from tasks.models import Task
+    from decimal import Decimal
+    try:
+        task = Task.objects.create(
+            title=request.data.get('title', ''),
+            description=request.data.get('description', ''),
+            task_type=request.data.get('task_type', 'youtube'),
+            reward=Decimal(str(request.data.get('reward', 0))),
+            time_required=int(request.data.get('time_required', 60)),
+            url=request.data.get('url', ''),
+            verification_code=request.data.get('verification_code', ''),
+            is_active=request.data.get('is_active', True),
+            max_completions=int(request.data.get('max_completions', 0)),
+        )
+        return Response({'message': 'Task created', 'id': task.id})
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def admin_edit_task(request, task_id):
+    from tasks.models import Task
+    from decimal import Decimal
+    try:
+        task = Task.objects.get(id=task_id)
+        if 'title' in request.data: task.title = request.data['title']
+        if 'description' in request.data: task.description = request.data['description']
+        if 'task_type' in request.data: task.task_type = request.data['task_type']
+        if 'reward' in request.data: task.reward = Decimal(str(request.data['reward']))
+        if 'time_required' in request.data: task.time_required = int(request.data['time_required'])
+        if 'url' in request.data: task.url = request.data['url']
+        if 'verification_code' in request.data: task.verification_code = request.data['verification_code']
+        if 'is_active' in request.data: task.is_active = request.data['is_active']
+        if 'max_completions' in request.data: task.max_completions = int(request.data['max_completions'])
+        task.save()
+        return Response({'message': 'Task updated'})
+    except Task.DoesNotExist:
+        return Response({'error': 'Task not found'}, status=404)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def admin_delete_task(request, task_id):
+    from tasks.models import Task
+    try:
+        Task.objects.get(id=task_id).delete()
+        return Response({'message': 'Task deleted'})
+    except Task.DoesNotExist:
+        return Response({'error': 'Task not found'}, status=404)

@@ -4,7 +4,7 @@ from django.http import HttpResponseRedirect
 
 def redirect_register(request):
     ref = request.GET.get('ref', '')
-    return HttpResponseRedirect(f'https://cornflourfrontend.vercel.app/register?ref={ref}')
+    return HttpResponseRedirect(f'https://cornflowercashflow.online/register?ref={ref}')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

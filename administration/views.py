@@ -337,17 +337,20 @@ def get_payment_account(request):
 @permission_classes([IsAuthenticated])
 def submit_package_payment(request):
     screenshot = request.data.get('screenshot')
+    package_name = request.data.get('package_name', 'normal')
+    amount_map = {'normal': 800, 'super': 1800, 'premium': 3800, 'high_octane': 6800}
+    amount = amount_map.get(package_name, 800)
+
     if not screenshot:
         return Response({'error': 'Screenshot is required'}, status=400)
 
-    # Check if already has a pending/approved payment
     existing = PackagePayment.objects.filter(user=request.user, status__in=['pending', 'approved']).first()
     if existing:
         if existing.status == 'approved':
             return Response({'error': 'Your package is already active'}, status=400)
         return Response({'error': 'You already have a pending payment. Please wait for verification.'}, status=400)
 
-    PackagePayment.objects.create(user=request.user, screenshot=screenshot)
+    PackagePayment.objects.create(user=request.user, screenshot=screenshot, package_name=package_name, amount=amount)
     return Response({'message': 'Payment submitted! Your account will be activated within 24 hours after verification.'})
 
 
@@ -403,6 +406,7 @@ def list_package_payments(request):
             'id': p.id,
             'username': p.user.username,
             'email': p.user.email,
+            'package_name': p.package_name,
             'amount': p.amount,
             'status': p.status,
             'screenshot': p.screenshot,

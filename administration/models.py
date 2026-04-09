@@ -43,9 +43,16 @@ class PackagePayment(models.Model):
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
     ]
+    PACKAGE_CHOICES = [
+        ('normal', 'Normal'),
+        ('super', 'Super'),
+        ('premium', 'Premium'),
+        ('high_octane', 'High Octane'),
+    ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='package_payments')
+    package_name = models.CharField(max_length=20, choices=PACKAGE_CHOICES, default='normal')
     screenshot = models.TextField()  # base64 or URL
-    amount = models.DecimalField(max_digits=10, decimal_places=2, default=1800)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=800)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     admin_note = models.TextField(blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)

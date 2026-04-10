@@ -350,7 +350,20 @@ def submit_package_payment(request):
             return Response({'error': 'Your package is already active'}, status=400)
         return Response({'error': 'You already have a pending payment. Please wait for verification.'}, status=400)
 
-    PackagePayment.objects.create(user=request.user, screenshot=screenshot, package_name=package_name, amount=amount)
+    try:
+        PackagePayment.objects.create(
+            user=request.user,
+            screenshot=screenshot,
+            package_name=package_name,
+            amount=amount
+        )
+    except Exception:
+        # fallback if migration not run yet
+        PackagePayment.objects.create(
+            user=request.user,
+            screenshot=screenshot,
+            amount=amount
+        )
     return Response({'message': 'Payment submitted! Your account will be activated within 24 hours after verification.'})
 
 
@@ -360,11 +373,17 @@ def my_package_status(request):
     payment = PackagePayment.objects.filter(user=request.user).order_by('-submitted_at').first()
     if not payment:
         return Response({'status': 'none'})
-    return Response({
+    data = {
         'status': payment.status,
         'submitted_at': payment.submitted_at,
         'admin_note': payment.admin_note,
-    })
+    }
+    try:
+        data['package_name'] = payment.package_name
+        data['amount'] = float(payment.amount)
+    except Exception:
+        pass
+    return Response(data)
 
 
 # ── Admin: manage payment account & package payments ──────────────────────────

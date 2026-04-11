@@ -31,24 +31,27 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
     
     def update_level(self):
-        # Level based on number of completed tasks (points = completed tasks count)
-        if self.points >= 9:
+        # Level based on total referrals (team size)
+        from django.contrib.auth import get_user_model
+        total_referrals = self.__class__.objects.filter(referred_by=self).count()
+
+        if total_referrals >= 800:
             self.level = 9
-        elif self.points >= 8:
+        elif total_referrals >= 450:
             self.level = 8
-        elif self.points >= 7:
+        elif total_referrals >= 300:
             self.level = 7
-        elif self.points >= 6:
+        elif total_referrals >= 120:
             self.level = 6
-        elif self.points >= 5:
+        elif total_referrals >= 100:
             self.level = 5
-        elif self.points >= 4:
+        elif total_referrals >= 50:
             self.level = 4
-        elif self.points >= 3:
+        elif total_referrals >= 35:
             self.level = 3
-        elif self.points >= 2:
+        elif total_referrals >= 20:
             self.level = 2
-        elif self.points >= 1:
+        elif total_referrals >= 7:
             self.level = 1
         else:
             self.level = 0

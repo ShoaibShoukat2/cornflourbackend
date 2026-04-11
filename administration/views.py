@@ -338,7 +338,7 @@ def get_payment_account(request):
 def submit_package_payment(request):
     screenshot = request.data.get('screenshot')
     package_name = request.data.get('package_name', 'normal')
-    amount_map = {'normal': 800, 'super': 1800, 'premium': 3800, 'high_octane': 6800}
+    amount_map = {'normal': 700, 'super': 1400, 'premium': 3200, 'high_octane': 4500}
     amount = amount_map.get(package_name, 800)
 
     if not screenshot:

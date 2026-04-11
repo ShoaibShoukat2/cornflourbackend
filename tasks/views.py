@@ -9,18 +9,21 @@ from django.utils import timezone
 from datetime import date
 from decimal import Decimal
 
-# Level-based daily task reward (in Rs, stored as decimal /100)
+# Level-based daily task reward
 LEVEL_REWARDS = {
-    0: Decimal('0.07'),   # Rs 7
-    1: Decimal('0.15'),   # Rs 15
-    2: Decimal('0.22'),   # Rs 22
-    3: Decimal('0.26'),   # Rs 26
-    4: Decimal('0.32'),   # Rs 32
-    5: Decimal('0.38'),   # Rs 38
-    6: Decimal('0.45'),   # Rs 45
-    7: Decimal('0.55'),   # Rs 55
-    8: Decimal('0.62'),   # Rs 62
-    9: Decimal('0.70'),   # Rs 70
+    0: Decimal('0.07'),  1: Decimal('0.15'),  2: Decimal('0.22'),
+    3: Decimal('0.26'),  4: Decimal('0.32'),  5: Decimal('0.38'),
+    6: Decimal('0.45'),  7: Decimal('0.55'),  8: Decimal('0.62'),
+    9: Decimal('0.70'),
+}
+
+# Package → level → daily task limit
+# pkg key: normal=1st, super=2nd, premium=3rd, high_octane=4th
+TASK_LIMITS = {
+    'normal':      [1, 2, 2, 3, 3, 4, 4, 5, 5, 6],
+    'super':       [2, 2, 3, 3, 4, 5, 5, 6, 6, 7],
+    'premium':     [4, 4, 4, 4, 4, 5, 5, 6, 6, 7],
+    'high_octane': [7, 7, 7, 7, 7, 7, 7, 7, 7, 7],
 }
 
 
@@ -29,14 +32,50 @@ def user_has_package(user):
     return PackagePayment.objects.filter(user=user, status='approved').exists()
 
 
+def get_user_package(user):
+    """Returns the approved package_name or None"""
+    from administration.models import PackagePayment
+    pkg = PackagePayment.objects.filter(user=user, status='approved').order_by('-submitted_at').first()
+    if not pkg:
+        return None
+    try:
+        return pkg.package_name
+    except Exception:
+        return 'normal'
+
+
+def get_daily_task_limit(user):
+    pkg_name = get_user_package(user)
+    if not pkg_name:
+        return 0
+    level = min(user.level, 9)
+    limits = TASK_LIMITS.get(pkg_name, TASK_LIMITS['normal'])
+    return limits[level]
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def task_list(request):
     if not user_has_package(request.user):
-        return Response({'error': 'package_required', 'message': 'Buy the Corn Plan to access tasks'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'error': 'package_required', 'message': 'Buy a package to access tasks'}, status=status.HTTP_403_FORBIDDEN)
+
+    daily_limit = get_daily_task_limit(request.user)
+    today = date.today()
+    completed_today = UserTask.objects.filter(
+        user=request.user, status='verified',
+        completed_at__date=today
+    ).count()
+
     tasks = Task.objects.filter(is_active=True)
     serializer = TaskSerializer(tasks, many=True, context={'request': request})
-    return Response(serializer.data)
+    data = serializer.data
+
+    return Response({
+        'tasks': data,
+        'daily_limit': daily_limit,
+        'completed_today': completed_today,
+        'remaining_today': max(0, daily_limit - completed_today),
+    })
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -65,7 +104,19 @@ def start_task(request):
 @permission_classes([IsAuthenticated])
 def complete_task(request):
     if not user_has_package(request.user):
-        return Response({'error': 'package_required', 'message': 'Buy the Corn Plan to complete tasks'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'error': 'package_required', 'message': 'Buy a package to complete tasks'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Check daily task limit
+    daily_limit = get_daily_task_limit(request.user)
+    today = date.today()
+    completed_today = UserTask.objects.filter(
+        user=request.user, status='verified',
+        completed_at__date=today
+    ).count()
+
+    if completed_today >= daily_limit:
+        return Response({'error': f'Daily task limit reached ({daily_limit} tasks per day for your package and level)'}, status=status.HTTP_400_BAD_REQUEST)
+
     serializer = CompleteTaskSerializer(data=request.data)
     if serializer.is_valid():
         task_id = serializer.validated_data['task_id']
@@ -113,7 +164,11 @@ def complete_task(request):
             description=f'Completed task: {task.title} (Level {user_level})'
         )
 
-        return Response({'message': 'Task completed successfully', 'reward': float(reward)})
+        return Response({
+            'message': 'Task completed successfully', 
+            'reward': float(reward),
+            'remaining_today': max(0, daily_limit - completed_today - 1)
+        })
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

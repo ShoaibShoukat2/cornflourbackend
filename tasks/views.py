@@ -7,6 +7,21 @@ from .serializers import TaskSerializer, UserTaskSerializer, StartTaskSerializer
 from wallet.models import Wallet, Transaction
 from django.utils import timezone
 from datetime import date
+from decimal import Decimal
+
+# Level-based daily task reward (in Rs, stored as decimal /100)
+LEVEL_REWARDS = {
+    0: Decimal('0.07'),   # Rs 7
+    1: Decimal('0.15'),   # Rs 15
+    2: Decimal('0.22'),   # Rs 22
+    3: Decimal('0.26'),   # Rs 26
+    4: Decimal('0.32'),   # Rs 32
+    5: Decimal('0.38'),   # Rs 38
+    6: Decimal('0.45'),   # Rs 45
+    7: Decimal('0.55'),   # Rs 55
+    8: Decimal('0.62'),   # Rs 62
+    9: Decimal('0.70'),   # Rs 70
+}
 
 
 def user_has_package(user):
@@ -72,29 +87,33 @@ def complete_task(request):
         user_task.status = 'verified'
         user_task.completed_at = timezone.now()
         user_task.save()
-        
+
         # Update task completions
         task.current_completions += 1
         task.save()
-        
+
+        # Level-based reward
+        user_level = min(request.user.level, 9)
+        reward = LEVEL_REWARDS.get(user_level, LEVEL_REWARDS[0])
+
         # Add reward to wallet
         wallet = request.user.wallet
-        wallet.main_balance += task.reward
-        wallet.total_earned += task.reward
+        wallet.main_balance += reward
+        wallet.total_earned += reward
         wallet.save()
-        
-        # Add points
-        request.user.points += int(task.reward * 10)
+
+        # Increment points (used for level tracking)
+        request.user.points += 1
         request.user.update_level()
-        
+
         Transaction.objects.create(
             user=request.user,
             transaction_type='task',
-            amount=task.reward,
-            description=f'Completed task: {task.title}'
+            amount=reward,
+            description=f'Completed task: {task.title} (Level {user_level})'
         )
-        
-        return Response({'message': 'Task completed successfully', 'reward': task.reward})
+
+        return Response({'message': 'Task completed successfully', 'reward': float(reward)})
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

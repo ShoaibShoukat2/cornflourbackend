@@ -31,12 +31,27 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
     
     def update_level(self):
-        if self.points >= 500:
+        # Level based on number of completed tasks (points = completed tasks count)
+        if self.points >= 9:
+            self.level = 9
+        elif self.points >= 8:
+            self.level = 8
+        elif self.points >= 7:
+            self.level = 7
+        elif self.points >= 6:
+            self.level = 6
+        elif self.points >= 5:
+            self.level = 5
+        elif self.points >= 4:
+            self.level = 4
+        elif self.points >= 3:
             self.level = 3
-        elif self.points >= 100:
+        elif self.points >= 2:
             self.level = 2
-        else:
+        elif self.points >= 1:
             self.level = 1
+        else:
+            self.level = 0
         self.save()
     
     def __str__(self):

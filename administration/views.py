@@ -449,7 +449,9 @@ def approve_package_payment(request, payment_id):
         # 25% referral commission on package price
         user = payment.user
         if user.referred_by:
-            commission = Decimal(str(payment.amount)) * Decimal('0.25')
+            # payment.amount is stored in Rs (e.g. 4500), wallet stores in decimal (45.00)
+            # So commission = 25% of amount / 100
+            commission = Decimal(str(payment.amount)) * Decimal('0.25') / Decimal('100')
             from wallet.models import Wallet, Transaction
             ref_wallet, _ = Wallet.objects.get_or_create(user=user.referred_by)
             ref_wallet.main_balance += commission

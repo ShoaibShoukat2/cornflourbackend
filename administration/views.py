@@ -438,13 +438,30 @@ def list_package_payments(request):
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def approve_package_payment(request, payment_id):
+    from decimal import Decimal
     try:
         payment = PackagePayment.objects.get(id=payment_id)
         payment.status = 'approved'
         payment.admin_note = request.data.get('note', 'Approved')
         payment.processed_at = timezone.now()
         payment.save()
-        # Mark user package active (reuse is_email_verified flag or just rely on payment status)
+
+        # 25% referral commission on package price
+        user = payment.user
+        if user.referred_by:
+            commission = Decimal(str(payment.amount)) * Decimal('0.25')
+            from wallet.models import Wallet, Transaction
+            ref_wallet, _ = Wallet.objects.get_or_create(user=user.referred_by)
+            ref_wallet.main_balance += commission
+            ref_wallet.total_earned += commission
+            ref_wallet.save()
+            Transaction.objects.create(
+                user=user.referred_by,
+                transaction_type='referral',
+                amount=commission,
+                description=f'25% package commission from {user.username} (Rs {payment.amount})'
+            )
+
         return Response({'message': 'Package approved'})
     except PackagePayment.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)

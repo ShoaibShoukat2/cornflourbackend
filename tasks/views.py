@@ -164,6 +164,21 @@ def complete_task(request):
             description=f'Completed task: {task.title} (Level {user_level})'
         )
 
+        # 25% referral commission to referrer
+        if request.user.referred_by:
+            commission = reward * Decimal('0.25')
+            referrer = request.user.referred_by
+            ref_wallet, _ = Wallet.objects.get_or_create(user=referrer)
+            ref_wallet.main_balance += commission
+            ref_wallet.total_earned += commission
+            ref_wallet.save()
+            Transaction.objects.create(
+                user=referrer,
+                transaction_type='referral',
+                amount=commission,
+                description=f'25% commission from {request.user.username} task'
+            )
+
         return Response({
             'message': 'Task completed successfully', 
             'reward': float(reward),

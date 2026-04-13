@@ -16,7 +16,7 @@ class User(AbstractUser):
     two_factor_enabled = models.BooleanField(default=False)
     referral_code = models.CharField(max_length=20, unique=True, blank=True)
     referred_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='referrals')
-    level = models.IntegerField(default=1)
+    level = models.IntegerField(default=0)
     points = models.IntegerField(default=0)
     signup_bonus_claimed = models.BooleanField(default=False)
     last_login_bonus = models.DateField(null=True, blank=True)

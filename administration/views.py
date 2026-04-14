@@ -419,6 +419,11 @@ def manage_payment_account(request):
 def pending_package_count(request):
     count = PackagePayment.objects.filter(status='pending').count()
     return Response({'count': count})
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def list_package_payments(request):
     status_filter = request.GET.get('status', 'all')
     qs = PackagePayment.objects.select_related('user').only(
         'id', 'package_name', 'amount', 'status', 'screenshot', 'admin_note', 'submitted_at',

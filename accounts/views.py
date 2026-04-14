@@ -38,29 +38,14 @@ def register(request):
             description='Signup Bonus'
         )
         
-        # Referral bonus
+        # Referral bonus — 25% of package price given at package approval, not at signup
+        # No signup bonus to referrer here
         if user.referred_by:
-            settings = ReferralSettings.objects.first()
-            if not settings:
-                settings = ReferralSettings.objects.create()
-            
-            referrer_wallet = user.referred_by.wallet
-            referrer_wallet.main_balance += settings.signup_bonus
-            referrer_wallet.total_earned += settings.signup_bonus
-            referrer_wallet.save()
-            
             ReferralEarning.objects.create(
                 referrer=user.referred_by,
                 referred_user=user,
-                amount=settings.signup_bonus,
+                amount=0,
                 earning_type='signup'
-            )
-            
-            Transaction.objects.create(
-                user=user.referred_by,
-                transaction_type='referral',
-                amount=settings.signup_bonus,
-                description=f'Referral bonus from {user.username}'
             )
         
         token = Token.objects.create(user=user)

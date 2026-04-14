@@ -459,13 +459,14 @@ def approve_package_payment(request, payment_id):
         payment.processed_at = timezone.now()
         payment.save()
 
-        # 25% referral commission on package price
+        # 25% referral commission on package price (Level 1 — Direct Refer)
         user = payment.user
         if user.referred_by:
-            # payment.amount is stored in Rs (e.g. 4500), wallet stores in decimal (45.00)
-            # So commission = 25% of amount / 100
+            # 25% of package amount (stored in Rs e.g. 4500)
+            # wallet stores in decimal units (e.g. 45.00 = Rs 4500)
             commission = Decimal(str(payment.amount)) * Decimal('0.25') / Decimal('100')
             from wallet.models import Wallet, Transaction
+            from referrals.models import ReferralEarning
             ref_wallet, _ = Wallet.objects.get_or_create(user=user.referred_by)
             ref_wallet.main_balance += commission
             ref_wallet.total_earned += commission
@@ -476,6 +477,54 @@ def approve_package_payment(request, payment_id):
                 amount=commission,
                 description=f'25% package commission from {user.username} (Rs {payment.amount})'
             )
+            ReferralEarning.objects.create(
+                referrer=user.referred_by,
+                referred_user=user,
+                amount=commission,
+                earning_type='package_commission'
+            )
+
+            # Level 2 — 3% to referrer's referrer on package
+            if user.referred_by.referred_by:
+                commission_l2 = Decimal(str(payment.amount)) * Decimal('0.03') / Decimal('100')
+                referrer_l2 = user.referred_by.referred_by
+                ref_wallet_l2, _ = Wallet.objects.get_or_create(user=referrer_l2)
+                ref_wallet_l2.main_balance += commission_l2
+                ref_wallet_l2.total_earned += commission_l2
+                ref_wallet_l2.save()
+                Transaction.objects.create(
+                    user=referrer_l2,
+                    transaction_type='referral',
+                    amount=commission_l2,
+                    description=f'3% L2 package commission from {user.username} (Rs {payment.amount})'
+                )
+                ReferralEarning.objects.create(
+                    referrer=referrer_l2,
+                    referred_user=user,
+                    amount=commission_l2,
+                    earning_type='package_commission_l2'
+                )
+
+                # Level 3 — 1% to referrer's referrer's referrer on package
+                if referrer_l2.referred_by:
+                    commission_l3 = Decimal(str(payment.amount)) * Decimal('0.01') / Decimal('100')
+                    referrer_l3 = referrer_l2.referred_by
+                    ref_wallet_l3, _ = Wallet.objects.get_or_create(user=referrer_l3)
+                    ref_wallet_l3.main_balance += commission_l3
+                    ref_wallet_l3.total_earned += commission_l3
+                    ref_wallet_l3.save()
+                    Transaction.objects.create(
+                        user=referrer_l3,
+                        transaction_type='referral',
+                        amount=commission_l3,
+                        description=f'1% L3 package commission from {user.username} (Rs {payment.amount})'
+                    )
+                    ReferralEarning.objects.create(
+                        referrer=referrer_l3,
+                        referred_user=user,
+                        amount=commission_l3,
+                        earning_type='package_commission_l3'
+                    )
 
         return Response({'message': 'Package approved'})
     except PackagePayment.DoesNotExist:

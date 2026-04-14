@@ -165,9 +165,9 @@ def complete_task(request):
             description=f'Completed task: {task.title} (Level {user_level})'
         )
 
-        # 25% referral commission to referrer
+        # Level 1 referral commission on task earnings — 1%
         if request.user.referred_by:
-            commission = reward * Decimal('0.25')
+            commission = reward * Decimal('0.01')
             referrer = request.user.referred_by
             ref_wallet, _ = Wallet.objects.get_or_create(user=referrer)
             ref_wallet.main_balance += commission
@@ -177,8 +177,57 @@ def complete_task(request):
                 user=referrer,
                 transaction_type='referral',
                 amount=commission,
-                description=f'25% commission from {request.user.username} task'
+                description=f'1% task commission from {request.user.username}'
             )
+            from referrals.models import ReferralEarning
+            ReferralEarning.objects.create(
+                referrer=referrer,
+                referred_user=request.user,
+                amount=commission,
+                earning_type='task_commission'
+            )
+
+            # Level 2 commission — 3% to referrer's referrer
+            if referrer.referred_by:
+                commission_l2 = reward * Decimal('0.03')
+                referrer_l2 = referrer.referred_by
+                ref_wallet_l2, _ = Wallet.objects.get_or_create(user=referrer_l2)
+                ref_wallet_l2.main_balance += commission_l2
+                ref_wallet_l2.total_earned += commission_l2
+                ref_wallet_l2.save()
+                Transaction.objects.create(
+                    user=referrer_l2,
+                    transaction_type='referral',
+                    amount=commission_l2,
+                    description=f'3% L2 task commission from {request.user.username}'
+                )
+                ReferralEarning.objects.create(
+                    referrer=referrer_l2,
+                    referred_user=request.user,
+                    amount=commission_l2,
+                    earning_type='task_commission_l2'
+                )
+
+                # Level 3 commission — 1% to referrer's referrer's referrer
+                if referrer_l2.referred_by:
+                    commission_l3 = reward * Decimal('0.01')
+                    referrer_l3 = referrer_l2.referred_by
+                    ref_wallet_l3, _ = Wallet.objects.get_or_create(user=referrer_l3)
+                    ref_wallet_l3.main_balance += commission_l3
+                    ref_wallet_l3.total_earned += commission_l3
+                    ref_wallet_l3.save()
+                    Transaction.objects.create(
+                        user=referrer_l3,
+                        transaction_type='referral',
+                        amount=commission_l3,
+                        description=f'1% L3 task commission from {request.user.username}'
+                    )
+                    ReferralEarning.objects.create(
+                        referrer=referrer_l3,
+                        referred_user=request.user,
+                        amount=commission_l3,
+                        earning_type='task_commission_l3'
+                    )
 
         return Response({
             'message': 'Task completed successfully',

@@ -147,14 +147,15 @@ def complete_task(request):
         user_level = min(request.user.level, 9)
         reward = LEVEL_REWARDS.get(user_level, LEVEL_REWARDS[0])
 
-        # Add reward to wallet
-        wallet = request.user.wallet
+        # Add reward to wallet — use get_or_create to be safe
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
         wallet.main_balance += reward
         wallet.total_earned += reward
         wallet.save()
 
-        # Increment points (used for level tracking)
+        # Increment points and update level
         request.user.points += 1
+        request.user.save(update_fields=['points'])
         request.user.update_level()
 
         Transaction.objects.create(
@@ -180,8 +181,9 @@ def complete_task(request):
             )
 
         return Response({
-            'message': 'Task completed successfully', 
+            'message': 'Task completed successfully',
             'reward': float(reward),
+            'new_balance': float(wallet.main_balance),
             'remaining_today': max(0, daily_limit - completed_today - 1)
         })
     

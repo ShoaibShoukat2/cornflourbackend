@@ -6,7 +6,8 @@ from .models import Wallet, Transaction, Withdrawal
 from .serializers import WalletSerializer, TransactionSerializer, WithdrawalSerializer, CreateWithdrawalSerializer
 from django.utils import timezone
 
-MINIMUM_WITHDRAWAL = 5.00
+MINIMUM_WITHDRAWAL_FIRST = 0.50   # Rs 50 — first withdrawal
+MINIMUM_WITHDRAWAL = 5.00         # Rs 500 — subsequent withdrawals
 
 
 def user_has_package(user):
@@ -35,9 +36,14 @@ def create_withdrawal(request):
     
     if serializer.is_valid():
         amount = serializer.validated_data['amount']
-        
-        if amount < MINIMUM_WITHDRAWAL:
-            return Response({'error': 'Minimum withdrawal is Rs 500'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if this is first withdrawal
+        has_previous = Withdrawal.objects.filter(user=request.user).exists()
+        min_amount = MINIMUM_WITHDRAWAL_FIRST if not has_previous else MINIMUM_WITHDRAWAL
+        min_rs = int(min_amount * 100)
+
+        if amount < min_amount:
+            return Response({'error': f'Minimum withdrawal is Rs {min_rs}'}, status=status.HTTP_400_BAD_REQUEST)
         
         if wallet.main_balance < amount:
             return Response({'error': 'Insufficient balance'}, status=status.HTTP_400_BAD_REQUEST)

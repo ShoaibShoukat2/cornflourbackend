@@ -24,9 +24,9 @@ def register(request):
         # Create wallet
         wallet = Wallet.objects.create(user=user)
         
-        # Signup bonus
-        wallet.bonus_balance = 1.00
-        wallet.total_earned = 1.00
+        # Signup bonus — Rs 50 (stored as 0.50 in decimal)
+        wallet.bonus_balance = 0.50
+        wallet.total_earned = 0.50
         user.signup_bonus_claimed = True
         user.save()
         wallet.save()
@@ -34,8 +34,8 @@ def register(request):
         Transaction.objects.create(
             user=user,
             transaction_type='bonus',
-            amount=1.00,
-            description='Signup Bonus'
+            amount=0.50,
+            description='Signup Bonus - Rs 50'
         )
         
         # Referral bonus — 25% of package price given at package approval, not at signup

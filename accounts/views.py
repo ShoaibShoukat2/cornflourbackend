@@ -24,8 +24,9 @@ def register(request):
         # Create wallet
         wallet = Wallet.objects.create(user=user)
         
-        # Signup bonus — Rs 50 (stored as 0.50 in decimal)
-        wallet.bonus_balance = 0.50
+        # Signup bonus — Rs 50 (stored as 0.50 in decimal) added to main_balance so it's withdrawable
+        wallet.main_balance = 0.50
+        wallet.bonus_balance = 0.00
         wallet.total_earned = 0.50
         user.signup_bonus_claimed = True
         user.save()

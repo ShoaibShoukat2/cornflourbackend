@@ -416,12 +416,18 @@ def manage_payment_account(request):
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
-def list_package_payments(request):
+def pending_package_count(request):
+    count = PackagePayment.objects.filter(status='pending').count()
+    return Response({'count': count})
     status_filter = request.GET.get('status', 'all')
-    qs = PackagePayment.objects.all() if status_filter == 'all' else PackagePayment.objects.filter(status=status_filter)
-    data = []
-    for p in qs:
-        data.append({
+    qs = PackagePayment.objects.select_related('user').only(
+        'id', 'package_name', 'amount', 'status', 'screenshot', 'admin_note', 'submitted_at',
+        'user__username', 'user__email'
+    )
+    if status_filter != 'all':
+        qs = qs.filter(status=status_filter)
+    data = [
+        {
             'id': p.id,
             'username': p.user.username,
             'email': p.user.email,
@@ -431,7 +437,9 @@ def list_package_payments(request):
             'screenshot': p.screenshot,
             'admin_note': p.admin_note,
             'submitted_at': p.submitted_at,
-        })
+        }
+        for p in qs
+    ]
     return Response(data)
 
 

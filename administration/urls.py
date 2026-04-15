@@ -36,4 +36,14 @@ urlpatterns = [
     path('tasks/create/', views.admin_create_task, name='admin_create_task'),
     path('tasks/edit/<int:task_id>/', views.admin_edit_task, name='admin_edit_task'),
     path('tasks/delete/<int:task_id>/', views.admin_delete_task, name='admin_delete_task'),
+
+    # New Admin Features
+    path('approved-users/', views.all_approved_users, name='all_approved_users'),
+    path('new-user-requests/', views.new_user_requests, name='new_user_requests'),
+    path('withdrawal-requests/', views.withdrawal_requests, name='withdrawal_requests'),
+    path('rejected-users/', views.rejected_users, name='rejected_users'),
+    path('referral-commission-settings/', views.referral_commission_settings, name='referral_commission_settings'),
+    path('level-settings/', views.level_settings, name='level_settings'),
+    path('payment-accounts/', views.payment_accounts_all, name='payment_accounts_all'),
+    path('payment-accounts/<int:account_id>/delete/', views.delete_payment_account, name='delete_payment_account'),
 ]

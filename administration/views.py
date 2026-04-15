@@ -761,3 +761,197 @@ def admin_delete_task(request, task_id):
         return Response({'message': 'Task deleted'})
     except Task.DoesNotExist:
         return Response({'error': 'Task not found'}, status=404)
+
+
+# ── New Admin Views ────────────────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def all_approved_users(request):
+    """All users with approved packages"""
+    today = date.today()
+    users = User.objects.filter(
+        package_payments__status='approved'
+    ).distinct().select_related('wallet').order_by('-created_at')
+
+    today_approved = PackagePayment.objects.filter(
+        status='approved', processed_at__date=today
+    ).select_related('user').count()
+
+    data = []
+    for u in users:
+        pkg = PackagePayment.objects.filter(user=u, status='approved').order_by('-submitted_at').first()
+        try:
+            bal = float(u.wallet.main_balance)
+        except:
+            bal = 0
+        data.append({
+            'id': u.id,
+            'username': u.username,
+            'email': u.email,
+            'level': u.level,
+            'balance': bal,
+            'is_active': u.is_active,
+            'package_name': pkg.package_name if pkg else '',
+            'package_amount': float(pkg.amount) if pkg else 0,
+            'approved_at': pkg.processed_at if pkg else None,
+            'created_at': u.created_at,
+        })
+    return Response({'users': data, 'today_approved': today_approved})
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def new_user_requests(request):
+    """Users who submitted package payment but not yet approved"""
+    today = date.today()
+    pending = PackagePayment.objects.filter(
+        status='pending'
+    ).select_related('user').order_by('-submitted_at')
+
+    data = [{
+        'id': p.id,
+        'username': p.user.username,
+        'email': p.user.email,
+        'package_name': p.package_name,
+        'amount': float(p.amount),
+        'screenshot': p.screenshot,
+        'submitted_at': p.submitted_at,
+    } for p in pending]
+
+    return Response({
+        'requests': data,
+        'total': len(data),
+        'today': PackagePayment.objects.filter(status='pending', submitted_at__date=today).count(),
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def withdrawal_requests(request):
+    """Pending + today stats for withdrawals"""
+    today = date.today()
+    method = request.GET.get('method', 'all')
+
+    qs = Withdrawal.objects.filter(status='pending').select_related('user').order_by('-created_at')
+    if method != 'all':
+        qs = qs.filter(payment_method=method)
+
+    today_approved = Withdrawal.objects.filter(status='approved', processed_at__date=today)
+    today_rejected = Withdrawal.objects.filter(status='rejected', processed_at__date=today)
+
+    # Easypaisa & Jazzcash breakdown
+    ep_pending = Withdrawal.objects.filter(status='pending', payment_method='easypaisa').count()
+    jc_pending = Withdrawal.objects.filter(status='pending', payment_method='jazzcash').count()
+    ep_amount = Withdrawal.objects.filter(status='pending', payment_method='easypaisa').aggregate(Sum('amount'))['amount__sum'] or 0
+    jc_amount = Withdrawal.objects.filter(status='pending', payment_method='jazzcash').aggregate(Sum('amount'))['amount__sum'] or 0
+
+    data = [{
+        'id': w.id,
+        'username': w.user.username,
+        'email': w.user.email,
+        'amount': float(w.amount),
+        'payment_method': w.payment_method,
+        'payment_details': w.payment_details,
+        'created_at': w.created_at,
+    } for w in qs]
+
+    return Response({
+        'pending': data,
+        'total_pending': len(data),
+        'today_approved_count': today_approved.count(),
+        'today_approved_amount': float(today_approved.aggregate(Sum('amount'))['amount__sum'] or 0),
+        'today_rejected_count': today_rejected.count(),
+        'easypaisa': {'count': ep_pending, 'amount': float(ep_amount)},
+        'jazzcash': {'count': jc_pending, 'amount': float(jc_amount)},
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def rejected_users(request):
+    """Users with rejected packages"""
+    rejected = PackagePayment.objects.filter(
+        status='rejected'
+    ).select_related('user').order_by('-processed_at')
+
+    data = [{
+        'id': p.id,
+        'username': p.user.username,
+        'email': p.user.email,
+        'package_name': p.package_name,
+        'amount': float(p.amount),
+        'admin_note': p.admin_note,
+        'submitted_at': p.submitted_at,
+        'processed_at': p.processed_at,
+    } for p in rejected]
+
+    return Response({'users': data, 'total': len(data)})
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAdminUser])
+def referral_commission_settings(request):
+    """Get/update referral commission rates"""
+    settings, _ = SiteSettings.objects.get_or_create(id=1)
+    if request.method == 'GET':
+        return Response({
+            'l1_package': 25,   # hardcoded in code but shown here
+            'l2_package': 3,
+            'l3_package': 1,
+            'l1_task': 1,
+            'l2_task': 3,
+            'l3_task': 1,
+            'signup_bonus': float(settings.signup_bonus),
+            'referral_enabled': settings.referral_enabled,
+        })
+    # POST — update signup bonus & referral_enabled
+    if 'signup_bonus' in request.data:
+        from decimal import Decimal
+        settings.signup_bonus = Decimal(str(request.data['signup_bonus']))
+    if 'referral_enabled' in request.data:
+        settings.referral_enabled = bool(request.data['referral_enabled'])
+    settings.save()
+    return Response({'message': 'Referral settings updated'})
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAdminUser])
+def level_settings(request):
+    """Get/update level reward settings"""
+    from tasks.views import LEVEL_REWARDS, TASK_LIMITS
+    if request.method == 'GET':
+        return Response({
+            'level_rewards': {str(k): float(v) for k, v in LEVEL_REWARDS.items()},
+            'task_limits': TASK_LIMITS,
+        })
+    return Response({'message': 'Level settings are configured in code. Contact developer to update.'})
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAdminUser])
+def payment_accounts_all(request):
+    """Get/manage all payment accounts (Easypaisa, Jazzcash, etc.)"""
+    if request.method == 'GET':
+        accounts = PaymentAccount.objects.all().values()
+        return Response(list(accounts))
+
+    # POST — create or update by bank_name
+    bank_name = request.data.get('bank_name', '')
+    account, _ = PaymentAccount.objects.get_or_create(bank_name=bank_name)
+    account.account_title = request.data.get('account_title', account.account_title or '')
+    account.account_number = request.data.get('account_number', account.account_number or '')
+    account.instructions = request.data.get('instructions', account.instructions or '')
+    account.is_active = request.data.get('is_active', True)
+    account.save()
+    return Response({'message': f'{bank_name} account saved', 'id': account.id})
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAdminUser])
+def delete_payment_account(request, account_id):
+    try:
+        PaymentAccount.objects.get(id=account_id).delete()
+        return Response({'message': 'Account deleted'})
+    except PaymentAccount.DoesNotExist:
+        return Response({'error': 'Not found'}, status=404)

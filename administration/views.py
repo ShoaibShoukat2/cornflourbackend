@@ -21,39 +21,81 @@ def admin_dashboard_stats(request):
     active_users = User.objects.filter(is_active=True).count()
     new_users_today = User.objects.filter(created_at__date=today).count()
     blocked_users = User.objects.filter(is_active=False).count()
-    
+    approved_users = User.objects.filter(
+        package_payments__status='approved'
+    ).distinct().count()
+
     # Financial stats
     total_earnings = Wallet.objects.aggregate(Sum('total_earned'))['total_earned__sum'] or 0
     total_withdrawals = Withdrawal.objects.filter(status='approved').aggregate(Sum('amount'))['amount__sum'] or 0
+    today_withdrawals = Withdrawal.objects.filter(
+        status='approved', processed_at__date=today
+    ).aggregate(Sum('amount'))['amount__sum'] or 0
     pending_withdrawals = Withdrawal.objects.filter(status='pending').aggregate(Sum('amount'))['amount__sum'] or 0
     pending_withdrawal_count = Withdrawal.objects.filter(status='pending').count()
-    
+
+    # Total deposited (approved packages)
+    total_deposited = PackagePayment.objects.filter(status='approved').aggregate(
+        Sum('amount'))['amount__sum'] or 0
+
+    # Referral commissions
+    from referrals.models import ReferralEarning
+    total_referral_commission = ReferralEarning.objects.aggregate(
+        Sum('amount'))['amount__sum'] or 0
+
+    # Earnings breakdown
+    task_earnings = Transaction.objects.filter(
+        transaction_type='task'
+    ).aggregate(Sum('amount'))['amount__sum'] or 0
+
+    manual_additions = Transaction.objects.filter(
+        transaction_type='bonus',
+        description__icontains='Admin bonus'
+    ).aggregate(Sum('amount'))['amount__sum'] or 0
+
+    # Manual subtractions — negative balance edits (we track via description)
+    manual_subtractions = Transaction.objects.filter(
+        transaction_type='bonus',
+        description__icontains='Admin deduct'
+    ).aggregate(Sum('amount'))['amount__sum'] or 0
+
+    net_manual = float(manual_additions or 0) - float(manual_subtractions or 0)
+
     # Task stats
     total_tasks = Task.objects.count()
     active_tasks = Task.objects.filter(is_active=True).count()
     completed_tasks_today = UserTask.objects.filter(completed_at__date=today, status='verified').count()
     total_completed_tasks = UserTask.objects.filter(status='verified').count()
-    
+
     # Fraud stats
     fraud_alerts = FraudDetection.objects.filter(is_resolved=False).count()
     critical_frauds = FraudDetection.objects.filter(is_resolved=False, severity='critical').count()
-    
-    # Revenue (earnings - withdrawals)
+
     revenue = float(total_earnings) - float(total_withdrawals)
-    
+
     return Response({
         'users': {
             'total': total_users,
             'active': active_users,
             'new_today': new_users_today,
             'blocked': blocked_users,
+            'approved': approved_users,
         },
         'financial': {
             'total_earnings': total_earnings,
             'total_withdrawals': total_withdrawals,
+            'today_withdrawals': today_withdrawals,
             'pending_withdrawals': pending_withdrawals,
             'pending_count': pending_withdrawal_count,
+            'total_deposited': total_deposited,
+            'total_referral_commission': total_referral_commission,
             'revenue': revenue,
+        },
+        'earnings_breakdown': {
+            'task_earnings': task_earnings,
+            'manual_additions': manual_additions,
+            'manual_subtractions': manual_subtractions,
+            'net_manual': net_manual,
         },
         'tasks': {
             'total': total_tasks,

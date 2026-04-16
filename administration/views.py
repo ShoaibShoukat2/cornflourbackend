@@ -256,23 +256,27 @@ def add_bonus_to_user(request, user_id):
     try:
         user = User.objects.get(id=user_id)
         amount = Decimal(str(request.data.get('amount', 0)))
-        
-        if amount <= 0:
+        description = request.data.get('description', 'Admin bonus: Manual Addition')
+
+        if amount == 0:
             return Response({'error': 'Invalid amount'}, status=400)
-        
-        wallet = user.wallet
-        wallet.main_balance += amount
-        wallet.total_earned += amount
+
+        wallet, _ = Wallet.objects.get_or_create(user=user)
+
+        if amount > 0:
+            wallet.main_balance += amount
+            wallet.total_earned += amount
+        # For negative (deduct tracking only — balance already set via edit-user)
         wallet.save()
-        
+
         Transaction.objects.create(
             user=user,
             transaction_type='bonus',
             amount=amount,
-            description=f'Admin bonus: {request.data.get("description", "Manual bonus")}'
+            description=description
         )
-        
-        return Response({'message': f'Added ${amount} bonus to {user.username}'})
+
+        return Response({'message': f'Transaction recorded for {user.username}'})
     except User.DoesNotExist:
         return Response({'error': 'User not found'}, status=404)
     except (ValueError, TypeError):

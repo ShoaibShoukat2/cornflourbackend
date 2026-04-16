@@ -955,3 +955,21 @@ def delete_payment_account(request, account_id):
         return Response({'message': 'Account deleted'})
     except PaymentAccount.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def get_user_transactions(request, user_id):
+    try:
+        user = User.objects.get(id=user_id)
+        txs = Transaction.objects.filter(user=user).order_by('-created_at')[:50]
+        data = [{
+            'id': t.id,
+            'transaction_type': t.transaction_type,
+            'amount': float(t.amount),
+            'description': t.description,
+            'created_at': t.created_at,
+        } for t in txs]
+        return Response(data)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=404)

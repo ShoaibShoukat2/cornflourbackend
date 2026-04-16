@@ -18,6 +18,7 @@ urlpatterns = [
     path('edit-user/<int:user_id>/', views.edit_user, name='edit_user'),
     path('user-detail/<int:user_id>/', views.get_user_detail, name='get_user_detail'),
     path('user-withdrawals/<int:user_id>/', views.get_user_withdrawals, name='get_user_withdrawals'),
+    path('user-transactions/<int:user_id>/', views.get_user_transactions, name='get_user_transactions'),
     
     # Withdrawal Management
     path('withdrawals/', views.get_all_withdrawals, name='get_all_withdrawals'),

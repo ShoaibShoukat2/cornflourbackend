@@ -241,8 +241,13 @@ def complete_task(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_tasks(request):
-    tasks = UserTask.objects.filter(user=request.user)
-    return Response(UserTaskSerializer(tasks, many=True).data)
+    tasks = UserTask.objects.filter(user=request.user).select_related('task')
+    total_verified = UserTask.objects.filter(user=request.user, status='verified').count()
+    serialized = UserTaskSerializer(tasks, many=True).data
+    return Response({
+        'tasks': serialized,
+        'total_completed': total_verified,
+    })
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

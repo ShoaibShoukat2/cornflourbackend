@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Withdrawal, Transaction
 from tasks.models import Task, UserTask
 from .models import Analytics, FraudDetection, IPTracking, SiteSettings, Announcement, PaymentAccount, PackagePayment
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
 from datetime import date, timedelta
 from django.utils import timezone
 
@@ -198,16 +198,23 @@ def create_announcement(request):
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def get_all_users(request):
-    users = User.objects.all().order_by('-created_at')[:100]
-    
+    search = request.GET.get('search', '').strip()
+
+    if search:
+        users = User.objects.filter(
+            models.Q(email__icontains=search) |
+            models.Q(username__icontains=search)
+        ).order_by('-created_at')[:50]
+    else:
+        users = User.objects.all().order_by('-created_at')[:200]
+
     user_data = []
     for user in users:
         try:
-            wallet = user.wallet
-            balance = wallet.main_balance
+            balance = user.wallet.main_balance
         except:
             balance = 0
-        
+
         user_data.append({
             'id': user.id,
             'username': user.username,
@@ -219,7 +226,7 @@ def get_all_users(request):
             'is_blocked': user.is_blocked,
             'created_at': user.created_at,
         })
-    
+
     return Response(user_data)
 
 @api_view(['POST'])

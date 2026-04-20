@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from datetime import date
 
 class Task(models.Model):
     TASK_TYPES = [
@@ -40,10 +41,12 @@ class UserTask(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     started_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    date = models.DateField(default=date.today)
     verification_input = models.CharField(max_length=200, blank=True)
     
     class Meta:
-        unique_together = ['user', 'task']
+        # Allow same task daily — unique per user+task+date
+        unique_together = ['user', 'task', 'date']
         ordering = ['-started_at']
     
     def __str__(self):

@@ -83,21 +83,23 @@ def start_task(request):
     serializer = StartTaskSerializer(data=request.data)
     if serializer.is_valid():
         task_id = serializer.validated_data['task_id']
-        
+        today = date.today()
+
         try:
             task = Task.objects.get(id=task_id, is_active=True)
         except Task.DoesNotExist:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        if UserTask.objects.filter(user=request.user, task=task).exists():
-            return Response({'error': 'Task already started'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # Check if already started/completed TODAY
+        if UserTask.objects.filter(user=request.user, task=task, date=today).exists():
+            return Response({'error': 'Task already started today'}, status=status.HTTP_400_BAD_REQUEST)
+
         if task.max_completions > 0 and task.current_completions >= task.max_completions:
             return Response({'error': 'Task limit reached'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        user_task = UserTask.objects.create(user=request.user, task=task)
+
+        user_task = UserTask.objects.create(user=request.user, task=task, date=today)
         return Response(UserTaskSerializer(user_task).data, status=status.HTTP_201_CREATED)
-    
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
@@ -123,9 +125,9 @@ def complete_task(request):
         verification_input = serializer.validated_data.get('verification_input', '')
         
         try:
-            user_task = UserTask.objects.get(user=request.user, task_id=task_id, status='pending')
+            user_task = UserTask.objects.get(user=request.user, task_id=task_id, status='pending', date=today)
         except UserTask.DoesNotExist:
-            return Response({'error': 'Task not found or already completed'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Task not found or already completed today'}, status=status.HTTP_404_NOT_FOUND)
         
         task = user_task.task
         

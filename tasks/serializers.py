@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Task, UserTask, DailyLoginBonus, PromoCode
+from datetime import date
 
 class TaskSerializer(serializers.ModelSerializer):
     is_completed = serializers.SerializerMethodField()
@@ -11,7 +12,11 @@ class TaskSerializer(serializers.ModelSerializer):
     def get_is_completed(self, obj):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            return UserTask.objects.filter(user=request.user, task=obj, status='verified').exists()
+            # Only mark completed for TODAY — resets daily
+            return UserTask.objects.filter(
+                user=request.user, task=obj,
+                status='verified', date=date.today()
+            ).exists()
         return False
 
 class UserTaskSerializer(serializers.ModelSerializer):

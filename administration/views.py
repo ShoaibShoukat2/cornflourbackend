@@ -202,8 +202,8 @@ def get_all_users(request):
 
     if search:
         users = User.objects.filter(
-            models.Q(email__icontains=search) |
-            models.Q(username__icontains=search)
+            Q(email__icontains=search) |
+            Q(username__icontains=search)
         ).order_by('-created_at')[:50]
     else:
         users = User.objects.all().order_by('-created_at')[:200]

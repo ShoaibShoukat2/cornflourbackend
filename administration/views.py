@@ -491,12 +491,15 @@ def pending_package_count(request):
 @permission_classes([IsAdminUser])
 def list_package_payments(request):
     status_filter = request.GET.get('status', 'all')
+    user_id = request.GET.get('user', None)
     qs = PackagePayment.objects.select_related('user').only(
         'id', 'package_name', 'amount', 'status', 'screenshot', 'admin_note', 'submitted_at',
         'user__username', 'user__email'
     )
     if status_filter != 'all':
         qs = qs.filter(status=status_filter)
+    if user_id:
+        qs = qs.filter(user_id=user_id)
     data = [
         {
             'id': p.id,

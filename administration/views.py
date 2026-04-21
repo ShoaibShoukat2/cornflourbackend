@@ -592,9 +592,18 @@ def approve_package_payment(request, payment_id):
                         earning_type='package_commission_l3'
                     )
 
+        # Update referrer's level after package approval
+        if user.referred_by:
+            user.referred_by.update_level()
+
         return Response({'message': 'Package approved'})
     except PackagePayment.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def reject_package_payment(request, payment_id):
     try:
         payment = PackagePayment.objects.get(id=payment_id)
         payment.status = 'rejected'

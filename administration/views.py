@@ -199,14 +199,22 @@ def create_announcement(request):
 @permission_classes([IsAdminUser])
 def get_all_users(request):
     search = request.GET.get('search', '').strip()
+    page = int(request.GET.get('page', 1))
+    page_size = 20
 
     if search:
-        users = User.objects.filter(
+        qs = User.objects.filter(
             Q(email__icontains=search) |
             Q(username__icontains=search)
-        ).order_by('-created_at')[:50]
+        ).order_by('-created_at')
     else:
-        users = User.objects.all().order_by('-created_at')[:200]
+        qs = User.objects.all().order_by('-created_at')
+
+    total = qs.count()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * page_size
+    users = qs[start:start + page_size]
 
     user_data = []
     for user in users:
@@ -214,7 +222,6 @@ def get_all_users(request):
             balance = user.wallet.main_balance
         except:
             balance = 0
-
         user_data.append({
             'id': user.id,
             'username': user.username,
@@ -227,7 +234,13 @@ def get_all_users(request):
             'created_at': user.created_at,
         })
 
-    return Response(user_data)
+    return Response({
+        'users': user_data,
+        'total': total,
+        'page': page,
+        'total_pages': total_pages,
+        'page_size': page_size,
+    })
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
@@ -582,11 +595,6 @@ def approve_package_payment(request, payment_id):
         return Response({'message': 'Package approved'})
     except PackagePayment.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
-
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-def reject_package_payment(request, payment_id):
     try:
         payment = PackagePayment.objects.get(id=payment_id)
         payment.status = 'rejected'

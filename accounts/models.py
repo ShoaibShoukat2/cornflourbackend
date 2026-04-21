@@ -31,9 +31,12 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
     
     def update_level(self):
-        # Level based on total referrals (team size)
-        from django.contrib.auth import get_user_model
-        total_referrals = self.__class__.objects.filter(referred_by=self).count()
+        """Level based on approved team members (paid packages only)"""
+        from administration.models import PackagePayment
+        total_referrals = PackagePayment.objects.filter(
+            user__referred_by=self,
+            status='approved'
+        ).values('user').distinct().count()
 
         if total_referrals >= 800:
             self.level = 9
@@ -55,7 +58,7 @@ class User(AbstractUser):
             self.level = 1
         else:
             self.level = 0
-        self.save()
+        self.save(update_fields=['level'])
     
     def __str__(self):
         return self.username

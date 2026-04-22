@@ -642,15 +642,16 @@ def get_user_withdrawals(request, user_id):
 @permission_classes([IsAdminUser])
 def get_user_detail(request, user_id):
     try:
-        user = User.objects.get(id=user_id)
+        user = User.objects.select_related('wallet').get(id=user_id)
         try:
             wallet = user.wallet
         except:
-            from wallet.models import Wallet
             wallet, _ = Wallet.objects.get_or_create(user=user)
 
+        # Run these 3 queries in parallel using aggregation
         from administration.models import PackagePayment
-        package = PackagePayment.objects.filter(user=user, status='approved').first()
+        from django.db.models import Count
+        package = PackagePayment.objects.filter(user=user, status='approved').only('id', 'package_name').first()
         total_team = User.objects.filter(referred_by=user).count()
         tx_count = Transaction.objects.filter(user=user).count()
 
@@ -993,7 +994,9 @@ def delete_payment_account(request, account_id):
 def get_user_transactions(request, user_id):
     try:
         user = User.objects.get(id=user_id)
-        txs = Transaction.objects.filter(user=user).order_by('-created_at')[:50]
+        txs = Transaction.objects.filter(user=user).only(
+            'id', 'transaction_type', 'amount', 'description', 'created_at'
+        ).order_by('-created_at')[:20]
         data = [{
             'id': t.id,
             'transaction_type': t.transaction_type,
@@ -1002,5 +1005,92 @@ def get_user_transactions(request, user_id):
             'created_at': t.created_at,
         } for t in txs]
         return Response(data)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=404)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def get_user_full(request, user_id):
+    """Single endpoint — returns all user data in one call"""
+    try:
+        user = User.objects.select_related('wallet').get(id=user_id)
+        try:
+            wallet = user.wallet
+        except:
+            wallet, _ = Wallet.objects.get_or_create(user=user)
+
+        package = PackagePayment.objects.filter(user=user, status='approved').only('id', 'package_name').first()
+        total_team = User.objects.filter(referred_by=user).count()
+        tx_count = Transaction.objects.filter(user=user).count()
+
+        withdrawals = list(Withdrawal.objects.filter(user=user).order_by('-created_at')[:20].values(
+            'id', 'amount', 'payment_method', 'payment_details', 'status', 'admin_note', 'created_at'
+        ))
+
+        transactions = list(Transaction.objects.filter(user=user).only(
+            'id', 'transaction_type', 'amount', 'description', 'created_at'
+        ).order_by('-created_at')[:20])
+
+        pkg_payment = PackagePayment.objects.filter(user=user).order_by('-submitted_at').first()
+
+        return Response({
+            'detail': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'phone': user.phone,
+                'level': user.level,
+                'points': user.points,
+                'referral_code': user.referral_code,
+                'is_active': user.is_active,
+                'is_blocked': user.is_blocked,
+                'block_reason': user.block_reason,
+                'two_factor_enabled': user.two_factor_enabled,
+                'is_email_verified': user.is_email_verified,
+                'created_at': user.created_at,
+                'last_activity': user.last_activity,
+                'has_package': package is not None,
+                'total_team': total_team,
+                'transaction_count': tx_count,
+                'wallet': {
+                    'main_balance': float(wallet.main_balance),
+                    'bonus_balance': float(wallet.bonus_balance),
+                    'pending_balance': float(wallet.pending_balance),
+                    'total_earned': float(wallet.total_earned),
+                    'total_withdrawn': float(wallet.total_withdrawn),
+                }
+            },
+            'withdrawals': [
+                {
+                    'id': w['id'],
+                    'amount': float(w['amount']),
+                    'payment_method': w['payment_method'],
+                    'payment_details': w['payment_details'],
+                    'status': w['status'],
+                    'admin_note': w['admin_note'],
+                    'created_at': w['created_at'],
+                } for w in withdrawals
+            ],
+            'transactions': [
+                {
+                    'id': t.id,
+                    'transaction_type': t.transaction_type,
+                    'amount': float(t.amount),
+                    'description': t.description,
+                    'created_at': t.created_at,
+                } for t in transactions
+            ],
+            'package_payment': {
+                'id': pkg_payment.id,
+                'status': pkg_payment.status,
+                'package_name': pkg_payment.package_name,
+                'amount': float(pkg_payment.amount),
+                'screenshot': pkg_payment.screenshot,
+                'admin_note': pkg_payment.admin_note,
+                'submitted_at': pkg_payment.submitted_at,
+                'email': user.email,
+            } if pkg_payment else None,
+        })
     except User.DoesNotExist:
         return Response({'error': 'User not found'}, status=404)

@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view, permission_classes
+﻿from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from django.contrib.auth import get_user_model
@@ -53,7 +53,7 @@ def admin_dashboard_stats(request):
         description__icontains='Admin bonus'
     ).aggregate(Sum('amount'))['amount__sum'] or 0
 
-    # Manual subtractions — negative balance edits (we track via description)
+    # Manual subtractions â€” negative balance edits (we track via description)
     manual_subtractions = Transaction.objects.filter(
         transaction_type='bonus',
         description__icontains='Admin deduct'
@@ -286,7 +286,7 @@ def add_bonus_to_user(request, user_id):
         if amount > 0:
             wallet.main_balance += amount
             wallet.total_earned += amount
-        # For negative (deduct tracking only — balance already set via edit-user)
+        # For negative (deduct tracking only â€” balance already set via edit-user)
         wallet.save()
 
         Transaction.objects.create(
@@ -383,7 +383,7 @@ def get_all_withdrawals(request):
     return Response(withdrawal_data)
 
 
-# ── Package Payment Views ──────────────────────────────────────────────────────
+# â”€â”€ Package Payment Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -452,7 +452,7 @@ def my_package_status(request):
     return Response(data)
 
 
-# ── Admin: manage payment account & package payments ──────────────────────────
+# â”€â”€ Admin: manage payment account & package payments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @api_view(['GET', 'POST'])
 @permission_classes([IsAdminUser])
@@ -469,7 +469,7 @@ def manage_payment_account(request):
             'instructions': account.instructions,
             'is_active': account.is_active,
         })
-    # POST — create or update
+    # POST â€” create or update
     account, _ = PaymentAccount.objects.get_or_create(id=1)
     account.account_title = request.data.get('account_title', account.account_title)
     account.account_number = request.data.get('account_number', account.account_number)
@@ -528,7 +528,7 @@ def approve_package_payment(request, payment_id):
         payment.processed_at = timezone.now()
         payment.save()
 
-        # 25% referral commission on package price (Level 1 — Direct Refer)
+        # 25% referral commission on package price (Level 1 â€” Direct Refer)
         user = payment.user
         if user.referred_by:
             # 25% of package amount (stored in Rs e.g. 4500)
@@ -553,7 +553,7 @@ def approve_package_payment(request, payment_id):
                 earning_type='package_commission'
             )
 
-            # Level 2 — 3% to referrer's referrer on package
+            # Level 2 â€” 3% to referrer's referrer on package
             if user.referred_by.referred_by:
                 commission_l2 = Decimal(str(payment.amount)) * Decimal('0.03') / Decimal('100')
                 referrer_l2 = user.referred_by.referred_by
@@ -574,7 +574,7 @@ def approve_package_payment(request, payment_id):
                     earning_type='package_commission_l2'
                 )
 
-                # Level 3 — 1% to referrer's referrer's referrer on package
+                # Level 3 â€” 1% to referrer's referrer's referrer on package
                 if referrer_l2.referred_by:
                     commission_l3 = Decimal(str(payment.amount)) * Decimal('0.01') / Decimal('100')
                     referrer_l3 = referrer_l2.referred_by
@@ -623,7 +623,7 @@ def reject_package_payment(request, payment_id):
 def get_user_withdrawals(request, user_id):
     try:
         user = User.objects.get(id=user_id)
-        withdrawals = Withdrawal.objects.filter(user=user).order_by('-created_at')[:20]
+        withdrawals = Withdrawal.objects.filter(user=user).order_by('-created_at')[:200]
         data = [{
             'id': w.id,
             'amount': float(w.amount),
@@ -632,6 +632,7 @@ def get_user_withdrawals(request, user_id):
             'status': w.status,
             'admin_note': w.admin_note,
             'created_at': w.created_at,
+            'processed_at': w.processed_at,
         } for w in withdrawals]
         return Response(data)
     except User.DoesNotExist:
@@ -652,7 +653,7 @@ def get_user_detail(request, user_id):
         from administration.models import PackagePayment
         from django.db.models import Count
         package = PackagePayment.objects.filter(user=user, status='approved').only('id', 'package_name').first()
-        total_team = User.objects.filter(referred_by=user).count()
+        total_team = PackagePayment.objects.filter(user__referred_by=user, status='approved').values('user').distinct().count()
         tx_count = Transaction.objects.filter(user=user).count()
 
         return Response({
@@ -673,6 +674,12 @@ def get_user_detail(request, user_id):
             'has_package': package is not None,
             'total_team': total_team,
             'transaction_count': tx_count,
+            'referred_by': {
+                'id': user.referred_by.id,
+                'username': user.referred_by.username,
+                'email': user.referred_by.email,
+                'referral_code': user.referred_by.referral_code,
+            } if user.referred_by else None,
             'wallet': {
                 'main_balance': float(wallet.main_balance),
                 'bonus_balance': float(wallet.bonus_balance),
@@ -716,7 +723,7 @@ def edit_user(request, user_id):
         return Response({'error': str(e)}, status=400)
 
 
-# ── Admin Task Management ──────────────────────────────────────────────────────
+# â”€â”€ Admin Task Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
@@ -795,7 +802,7 @@ def admin_delete_task(request, task_id):
         return Response({'error': 'Task not found'}, status=404)
 
 
-# ── New Admin Views ────────────────────────────────────────────────────────────
+# â”€â”€ New Admin Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
@@ -937,7 +944,7 @@ def referral_commission_settings(request):
             'signup_bonus': float(settings.signup_bonus),
             'referral_enabled': settings.referral_enabled,
         })
-    # POST — update signup bonus & referral_enabled
+    # POST â€” update signup bonus & referral_enabled
     if 'signup_bonus' in request.data:
         from decimal import Decimal
         settings.signup_bonus = Decimal(str(request.data['signup_bonus']))
@@ -968,7 +975,7 @@ def payment_accounts_all(request):
         accounts = PaymentAccount.objects.all().values()
         return Response(list(accounts))
 
-    # POST — create or update by bank_name
+    # POST â€” create or update by bank_name
     bank_name = request.data.get('bank_name', '')
     account, _ = PaymentAccount.objects.get_or_create(bank_name=bank_name)
     account.account_title = request.data.get('account_title', account.account_title or '')
@@ -1012,7 +1019,7 @@ def get_user_transactions(request, user_id):
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def get_user_full(request, user_id):
-    """Single endpoint — returns all user data in one call"""
+    """Single endpoint â€” returns all user data in one call"""
     try:
         user = User.objects.select_related('wallet').get(id=user_id)
         try:
@@ -1021,16 +1028,16 @@ def get_user_full(request, user_id):
             wallet, _ = Wallet.objects.get_or_create(user=user)
 
         package = PackagePayment.objects.filter(user=user, status='approved').only('id', 'package_name').first()
-        total_team = User.objects.filter(referred_by=user).count()
+        total_team = PackagePayment.objects.filter(user__referred_by=user, status='approved').values('user').distinct().count()
         tx_count = Transaction.objects.filter(user=user).count()
 
-        withdrawals = list(Withdrawal.objects.filter(user=user).order_by('-created_at')[:20].values(
-            'id', 'amount', 'payment_method', 'payment_details', 'status', 'admin_note', 'created_at'
+        withdrawals = list(Withdrawal.objects.filter(user=user).order_by('-created_at')[:200].values(
+            'id', 'amount', 'payment_method', 'payment_details', 'status', 'admin_note', 'created_at', 'processed_at'
         ))
 
         transactions = list(Transaction.objects.filter(user=user).only(
             'id', 'transaction_type', 'amount', 'description', 'created_at'
-        ).order_by('-created_at')[:20])
+        ).order_by('-created_at')[:200])
 
         pkg_payment = PackagePayment.objects.filter(user=user).order_by('-submitted_at').first()
 
@@ -1053,6 +1060,12 @@ def get_user_full(request, user_id):
                 'has_package': package is not None,
                 'total_team': total_team,
                 'transaction_count': tx_count,
+                'referred_by': {
+                    'id': user.referred_by.id,
+                    'username': user.referred_by.username,
+                    'email': user.referred_by.email,
+                    'referral_code': user.referred_by.referral_code,
+                } if user.referred_by else None,
                 'wallet': {
                     'main_balance': float(wallet.main_balance),
                     'bonus_balance': float(wallet.bonus_balance),
@@ -1094,3 +1107,4 @@ def get_user_full(request, user_id):
         })
     except User.DoesNotExist:
         return Response({'error': 'User not found'}, status=404)
+

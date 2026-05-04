@@ -25,6 +25,14 @@ def admin_dashboard_stats(request):
         package_payments__status='approved'
     ).distinct().count()
 
+    today_approved = PackagePayment.objects.filter(
+        status='approved', processed_at__date=today
+    ).values('user').distinct().count()
+
+    today_deposited = PackagePayment.objects.filter(
+        status='approved', processed_at__date=today
+    ).aggregate(Sum('amount'))['amount__sum'] or 0
+
     # Financial stats
     total_earnings = Wallet.objects.aggregate(Sum('total_earned'))['total_earned__sum'] or 0
     total_withdrawals = Withdrawal.objects.filter(status='approved').aggregate(Sum('amount'))['amount__sum'] or 0
@@ -80,6 +88,8 @@ def admin_dashboard_stats(request):
             'new_today': new_users_today,
             'blocked': blocked_users,
             'approved': approved_users,
+            'today_approved': today_approved,
+            'today_deposited': today_deposited,
         },
         'financial': {
             'total_earnings': total_earnings,

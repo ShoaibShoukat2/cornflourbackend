@@ -10,7 +10,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'phone', 'is_email_verified', 'referral_code', 'level', 'points', 'is_staff', 'created_at', 'has_package']
+        fields = ['id', 'username', 'email', 'phone', 'is_email_verified', 'referral_code', 'level', 'points', 'is_staff', 'created_at', 'has_package', 'profile_picture']
         read_only_fields = ['id', 'referral_code', 'level', 'points', 'is_staff', 'created_at', 'has_package']
 
     def get_has_package(self, obj):

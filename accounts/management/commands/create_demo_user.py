@@ -16,7 +16,7 @@ class Command(BaseCommand):
             # Create demo user
             user = User.objects.create_user(
                 username='demo',
-                email='demo@ytearn.com',
+                email='demo@instova.com',
                 password='demo123',
                 is_email_verified=True,
                 phone='+923001234567'
@@ -78,7 +78,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('\n=== Demo User Credentials ==='))
         self.stdout.write(self.style.SUCCESS(f'Username: demo'))
         self.stdout.write(self.style.SUCCESS(f'Password: demo123'))
-        self.stdout.write(self.style.SUCCESS(f'Email: demo@ytearn.com'))
+        self.stdout.write(self.style.SUCCESS(f'Email: demo@instova.com'))
         self.stdout.write(self.style.SUCCESS(f'Level: {user.level}'))
         self.stdout.write(self.style.SUCCESS(f'Points: {user.points}'))
         self.stdout.write(self.style.SUCCESS(f'Referral Code: {user.referral_code}'))

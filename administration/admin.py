@@ -139,6 +139,6 @@ admin.site.unregister(User)
 admin.site.register(User, UserAdminEnhanced)
 
 # Customize admin site
-admin.site.site_header = "YTEarn Admin Panel"
-admin.site.site_title = "YTEarn Admin"
-admin.site.index_title = "Welcome to YTEarn Administration"
+admin.site.site_header = "INSTOVA Admin Panel"
+admin.site.site_title = "INSTOVA Admin"
+admin.site.index_title = "Welcome to INSTOVA Administration"

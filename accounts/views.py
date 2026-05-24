@@ -91,6 +91,36 @@ def profile(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def upload_profile_picture(request):
+    picture = request.data.get('profile_picture', '')
+    if not picture:
+        return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(picture, str) or not picture.startswith('data:image/'):
+        return Response({'error': 'Invalid image format. Please upload JPG, PNG or WebP.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(picture) > 3 * 1024 * 1024:
+        return Response({'error': 'Image too large. Maximum size is 2MB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    request.user.profile_picture = picture
+    request.user.save(update_fields=['profile_picture'])
+    return Response({
+        'message': 'Profile picture updated',
+        'user': UserSerializer(request.user).data,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def remove_profile_picture(request):
+    request.user.profile_picture = ''
+    request.user.save(update_fields=['profile_picture'])
+    return Response({
+        'message': 'Profile picture removed',
+        'user': UserSerializer(request.user).data,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def change_password(request):
     serializer = ChangePasswordSerializer(data=request.data)
     if serializer.is_valid():

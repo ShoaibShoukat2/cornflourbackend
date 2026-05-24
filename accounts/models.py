@@ -24,6 +24,7 @@ class User(AbstractUser):
     block_reason = models.TextField(blank=True)
     last_activity = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    profile_picture = models.TextField(blank=True, default='')
     
     def save(self, *args, **kwargs):
         if not self.referral_code:

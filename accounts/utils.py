@@ -17,7 +17,7 @@ def send_verification_email(user):
     verification_link = f"http://localhost:5173/verify-email/{token}"
     
     send_mail(
-        'Verify Your Email - YTEarn',
+        'Verify Your Email - INSTOVA',
         f'Click the link to verify your email: {verification_link}',
         settings.DEFAULT_FROM_EMAIL,
         [user.email],
@@ -32,7 +32,7 @@ def send_otp_email(user):
     user.save()
     
     send_mail(
-        'Your OTP Code - YTEarn',
+        'Your OTP Code - INSTOVA',
         f'Your OTP code is: {otp}\n\nThis code will expire in 10 minutes.',
         settings.DEFAULT_FROM_EMAIL,
         [user.email],

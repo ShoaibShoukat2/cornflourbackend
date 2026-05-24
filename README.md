@@ -1,6 +1,6 @@
-# Corn Flour - Backend API
+# INSTOVA - Backend API
 
-Django REST Framework backend for the Corn Flour earning platform.
+Django REST Framework backend for the INSTOVA earning platform.
 
 ## Tech Stack
 
@@ -83,7 +83,7 @@ API runs at `http://localhost:8000/api/`
 
 ## Package Logic
 
-- Users must buy the **Corn Plan (Rs 1800)** to access tasks and withdrawals
+- Users must buy the **INSTOVA Plan (Rs 1800)** to access tasks and withdrawals
 - Without package: referrals and daily bonus are still available
 - Admin approves payment via `/api/admin/approve-package/<id>/`
 - Once approved, full access is unlocked

@@ -30,7 +30,7 @@ def transaction_list(request):
 @permission_classes([IsAuthenticated])
 def create_withdrawal(request):
     if not user_has_package(request.user):
-        return Response({'error': 'package_required', 'message': 'Buy the Corn Plan to withdraw money'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'error': 'package_required', 'message': 'Buy the INSTOVA Plan to withdraw money'}, status=status.HTTP_403_FORBIDDEN)
     wallet = request.user.wallet
     serializer = CreateWithdrawalSerializer(data=request.data)
     

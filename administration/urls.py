@@ -5,6 +5,7 @@ urlpatterns = [
     path('dashboard-stats/', views.admin_dashboard_stats, name='admin_dashboard_stats'),
     path('recent-activities/', views.recent_activities, name='recent_activities'),
     path('analytics-chart/', views.analytics_chart, name='analytics_chart'),
+    path('dashboard-charts/', views.admin_dashboard_charts, name='admin_dashboard_charts'),
     path('site-settings/', views.site_settings, name='site_settings'),
     path('update-settings/', views.update_site_settings, name='update_site_settings'),
     path('announcements/', views.announcements_list, name='announcements_list'),

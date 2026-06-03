@@ -163,6 +163,128 @@ def analytics_chart(request):
     
     return Response(data)
 
+
+def _wallet_to_rs(amount):
+    """Wallet amounts are stored in units; display as Rs (×100)."""
+    return float(amount or 0) * 100
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def admin_dashboard_charts(request):
+    """Live chart data computed from DB (no batch analytics required)."""
+    from referrals.models import ReferralEarning
+
+    days = min(30, max(7, int(request.GET.get('days', 14))))
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days - 1)
+
+    labels = []
+    new_users = []
+    deposits_rs = []
+    withdrawals_rs = []
+    referral_payout_rs = []
+    net_profit_rs = []
+
+    for i in range(days):
+        d = start_date + timedelta(days=i)
+        labels.append(d.strftime('%d %b'))
+
+        new_users.append(User.objects.filter(created_at__date=d).count())
+
+        dep = PackagePayment.objects.filter(
+            status='approved', processed_at__date=d
+        ).aggregate(Sum('amount'))['amount__sum'] or 0
+        deposits_rs.append(float(dep))
+
+        wdr = Withdrawal.objects.filter(
+            status='approved', processed_at__date=d
+        ).aggregate(Sum('amount'))['amount__sum'] or 0
+        withdrawals_rs.append(_wallet_to_rs(wdr))
+
+        ref = ReferralEarning.objects.filter(created_at__date=d).aggregate(
+            Sum('amount'))['amount__sum'] or 0
+        referral_payout_rs.append(_wallet_to_rs(ref))
+
+        net_profit_rs.append(deposits_rs[-1] - withdrawals_rs[-1] - referral_payout_rs[-1])
+
+    premium_user_ids = User.objects.filter(
+        package_payments__status='approved'
+    ).values_list('id', flat=True).distinct()
+    premium_users = User.objects.filter(
+        package_payments__status='approved'
+    ).distinct().count()
+    total_users = User.objects.count()
+    free_users = User.objects.exclude(id__in=premium_user_ids).count()
+
+    pending_package_users = PackagePayment.objects.filter(
+        status='pending'
+    ).values('user').distinct().count()
+
+    blocked_users = User.objects.filter(is_active=False).count()
+
+    tier_labels = {
+        'normal': 'Normal',
+        'super': 'Super',
+        'premium': 'Premium',
+        'high_octane': 'High Octane',
+    }
+    package_tiers = []
+    for row in PackagePayment.objects.filter(status='approved').values('package_name').annotate(
+        count=Count('id')
+    ).order_by('-count'):
+        package_tiers.append({
+            'name': tier_labels.get(row['package_name'], row['package_name']),
+            'key': row['package_name'],
+            'count': row['count'],
+        })
+
+    total_deposited = float(
+        PackagePayment.objects.filter(status='approved').aggregate(Sum('amount'))['amount__sum'] or 0
+    )
+    total_withdrawn = _wallet_to_rs(
+        Withdrawal.objects.filter(status='approved').aggregate(Sum('amount'))['amount__sum']
+    )
+    total_referral_paid = _wallet_to_rs(
+        ReferralEarning.objects.aggregate(Sum('amount'))['amount__sum']
+    )
+    platform_net = total_deposited - total_withdrawn - total_referral_paid
+
+    pending_packages = PackagePayment.objects.filter(status='pending').count()
+    pending_withdrawals = Withdrawal.objects.filter(status='pending').count()
+
+    return Response({
+        'days': days,
+        'labels': labels,
+        'series': {
+            'new_users': new_users,
+            'deposits_rs': deposits_rs,
+            'withdrawals_rs': withdrawals_rs,
+            'referral_payout_rs': referral_payout_rs,
+            'net_profit_rs': net_profit_rs,
+        },
+        'user_segments': [
+            {'name': 'Premium (Package)', 'value': premium_users, 'color': '#22c55e'},
+            {'name': 'Free (No Package)', 'value': free_users, 'color': '#64748b'},
+            {'name': 'Pending Package', 'value': pending_package_users, 'color': '#f59e0b'},
+            {'name': 'Blocked', 'value': blocked_users, 'color': '#ef4444'},
+        ],
+        'package_tiers': package_tiers,
+        'summary': {
+            'total_users': total_users,
+            'premium_users': premium_users,
+            'free_users': free_users,
+            'total_deposited_rs': total_deposited,
+            'total_withdrawn_rs': total_withdrawn,
+            'total_referral_paid_rs': total_referral_paid,
+            'platform_net_rs': platform_net,
+            'pending_packages': pending_packages,
+            'pending_withdrawals': pending_withdrawals,
+            'is_profitable': platform_net >= 0,
+        },
+        'updated_at': timezone.now().isoformat(),
+    })
+
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def site_settings(request):

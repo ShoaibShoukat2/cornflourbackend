@@ -936,6 +936,55 @@ def admin_delete_task(request, task_id):
 
 # â”€â”€ New Admin Views â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def admin_bulk_update_task_links(request):
+    """Update task URLs in bulk from admin panel."""
+    from tasks.models import Task
+
+    updates = request.data.get('updates')
+    if updates:
+        updated = 0
+        for item in updates:
+            task_id = item.get('id')
+            if task_id is None:
+                continue
+            try:
+                task = Task.objects.get(id=task_id)
+                task.url = item.get('url', '')
+                task.save(update_fields=['url'])
+                updated += 1
+            except Task.DoesNotExist:
+                continue
+        return Response({'message': f'{updated} task link(s) updated', 'updated': updated})
+
+    raw_urls = request.data.get('urls', '')
+    task_ids = request.data.get('task_ids')
+    url_lines = [u.strip() for u in raw_urls.splitlines() if u.strip()]
+
+    if not url_lines:
+        return Response({'error': 'No URLs provided'}, status=400)
+
+    if task_ids:
+        tasks = list(Task.objects.filter(id__in=task_ids).order_by('id'))
+        id_order = {tid: i for i, tid in enumerate(task_ids)}
+        tasks.sort(key=lambda t: id_order.get(t.id, 999999))
+    else:
+        tasks = list(Task.objects.filter(is_active=True).order_by('id'))
+
+    updated = 0
+    for task, url in zip(tasks, url_lines):
+        task.url = url
+        task.save(update_fields=['url'])
+        updated += 1
+
+    return Response({
+        'message': f'{updated} task link(s) updated',
+        'updated': updated,
+        'skipped': max(0, len(url_lines) - updated),
+    })
+
+
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def all_approved_users(request):

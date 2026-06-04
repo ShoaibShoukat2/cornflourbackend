@@ -39,6 +39,7 @@ urlpatterns = [
     path('tasks/create/', views.admin_create_task, name='admin_create_task'),
     path('tasks/edit/<int:task_id>/', views.admin_edit_task, name='admin_edit_task'),
     path('tasks/delete/<int:task_id>/', views.admin_delete_task, name='admin_delete_task'),
+    path('tasks/bulk-update-links/', views.admin_bulk_update_task_links, name='admin_bulk_update_task_links'),
 
     # New Admin Features
     path('approved-users/', views.all_approved_users, name='all_approved_users'),

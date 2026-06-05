@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from .models import ReferralEarning
 from .serializers import ReferralEarningSerializer, ReferralStatsSerializer
+from .utils import get_weekly_joining_status
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -25,7 +26,8 @@ def referral_stats(request):
         'total_referrals': total_referrals,
         'total_earnings': total_earnings,
         'referral_code': user.referral_code,
-        'referral_link': f'https://cornflowercashflow.online/register?ref={user.referral_code}'
+        'referral_link': f'https://cornflowercashflow.online/register?ref={user.referral_code}',
+        **get_weekly_joining_status(user),
     }
 
     serializer = ReferralStatsSerializer(data)

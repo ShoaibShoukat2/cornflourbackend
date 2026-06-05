@@ -16,3 +16,7 @@ class ReferralStatsSerializer(serializers.Serializer):
     total_earnings = serializers.DecimalField(max_digits=10, decimal_places=2)
     referral_code = serializers.CharField()
     referral_link = serializers.CharField()
+    weekly_joinings = serializers.IntegerField(required=False)
+    weekly_joinings_required = serializers.IntegerField(required=False)
+    ads_locked = serializers.BooleanField(required=False)
+    week_starts = serializers.CharField(required=False)

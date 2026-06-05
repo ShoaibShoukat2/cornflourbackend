@@ -8,6 +8,7 @@ from wallet.models import Wallet, Transaction
 from django.utils import timezone
 from datetime import date
 from decimal import Decimal
+from referrals.utils import get_weekly_joining_status, weekly_joining_task_block
 
 # Level-based daily task reward
 LEVEL_REWARDS = {
@@ -59,6 +60,10 @@ def task_list(request):
     if not user_has_package(request.user):
         return Response({'error': 'package_required', 'message': 'Buy a package to access tasks'}, status=status.HTTP_403_FORBIDDEN)
 
+    weekly_block = weekly_joining_task_block(request.user)
+    if weekly_block:
+        return Response(weekly_block, status=status.HTTP_403_FORBIDDEN)
+
     daily_limit = get_daily_task_limit(request.user)
     today = date.today()
     completed_today = UserTask.objects.filter(
@@ -75,11 +80,17 @@ def task_list(request):
         'daily_limit': daily_limit,
         'completed_today': completed_today,
         'remaining_today': max(0, daily_limit - completed_today),
+        **get_weekly_joining_status(request.user),
     })
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def start_task(request):
+    if user_has_package(request.user):
+        weekly_block = weekly_joining_task_block(request.user)
+        if weekly_block:
+            return Response(weekly_block, status=status.HTTP_403_FORBIDDEN)
+
     serializer = StartTaskSerializer(data=request.data)
     if serializer.is_valid():
         task_id = serializer.validated_data['task_id']
@@ -107,6 +118,10 @@ def start_task(request):
 def complete_task(request):
     if not user_has_package(request.user):
         return Response({'error': 'package_required', 'message': 'Buy a package to complete tasks'}, status=status.HTTP_403_FORBIDDEN)
+
+    weekly_block = weekly_joining_task_block(request.user)
+    if weekly_block:
+        return Response(weekly_block, status=status.HTTP_403_FORBIDDEN)
 
     # Check daily task limit
     daily_limit = get_daily_task_limit(request.user)

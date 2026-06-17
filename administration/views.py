@@ -1,6 +1,6 @@
 ﻿from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated, AllowAny
 from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Withdrawal, Transaction
 from tasks.models import Task, UserTask
@@ -300,6 +300,8 @@ def site_settings(request):
         'referral_enabled': settings.referral_enabled,
         'currency': settings.currency,
         'site_name': settings.site_name,
+        'whatsapp_channel_link': settings.whatsapp_channel_link,
+        'whatsapp_community_link': settings.whatsapp_community_link,
     })
 
 @api_view(['POST'])
@@ -313,6 +315,16 @@ def update_site_settings(request):
     
     settings.save()
     return Response({'message': 'Settings updated successfully'})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_contact_links(request):
+    settings, _ = SiteSettings.objects.get_or_create(id=1)
+    return Response({
+        'whatsapp_channel_link': settings.whatsapp_channel_link,
+        'whatsapp_community_link': settings.whatsapp_community_link,
+    })
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])

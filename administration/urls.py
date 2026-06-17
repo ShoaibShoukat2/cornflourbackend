@@ -8,6 +8,7 @@ urlpatterns = [
     path('dashboard-charts/', views.admin_dashboard_charts, name='admin_dashboard_charts'),
     path('site-settings/', views.site_settings, name='site_settings'),
     path('update-settings/', views.update_site_settings, name='update_site_settings'),
+    path('contact-links/', views.public_contact_links, name='public_contact_links'),
     path('announcements/', views.announcements_list, name='announcements_list'),
     path('create-announcement/', views.create_announcement, name='create_announcement'),
     

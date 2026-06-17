@@ -12,6 +12,16 @@ class SiteSettings(models.Model):
     referral_enabled = models.BooleanField(default=True)
     currency = models.CharField(max_length=3, default='USD')
     site_name = models.CharField(max_length=100, default='YTEarn')
+    whatsapp_channel_link = models.URLField(
+        max_length=500,
+        blank=True,
+        default='https://whatsapp.com/channel/0029VbBqz5bICVfmQKIAdV0n'
+    )
+    whatsapp_community_link = models.URLField(
+        max_length=500,
+        blank=True,
+        default='https://chat.whatsapp.com/L7v0Ehc0YpgGfiosYceZCn'
+    )
     paypal_enabled = models.BooleanField(default=True)
     crypto_enabled = models.BooleanField(default=True)
     bank_transfer_enabled = models.BooleanField(default=True)

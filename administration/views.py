@@ -5,7 +5,8 @@ from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Withdrawal, Transaction
 from tasks.models import Task, UserTask
 from .models import Analytics, FraudDetection, IPTracking, SiteSettings, Announcement, PaymentAccount, PackagePayment
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Count, Q, Prefetch
+from django.db.models.functions import TruncDate
 from datetime import date, timedelta
 from django.utils import timezone
 
@@ -15,70 +16,71 @@ User = get_user_model()
 @permission_classes([IsAdminUser])
 def admin_dashboard_stats(request):
     today = date.today()
-    
-    # User stats
-    total_users = User.objects.count()
-    active_users = User.objects.filter(is_active=True).count()
-    new_users_today = User.objects.filter(created_at__date=today).count()
-    blocked_users = User.objects.filter(is_active=False).count()
-    approved_users = User.objects.filter(
-        package_payments__status='approved'
-    ).distinct().count()
-
-    today_approved = PackagePayment.objects.filter(
-        status='approved', processed_at__date=today
-    ).values('user').distinct().count()
-
-    today_deposited = PackagePayment.objects.filter(
-        status='approved', processed_at__date=today
-    ).aggregate(Sum('amount'))['amount__sum'] or 0
-
-    # Financial stats
-    total_earnings = Wallet.objects.aggregate(Sum('total_earned'))['total_earned__sum'] or 0
-    total_withdrawals = Withdrawal.objects.filter(status='approved').aggregate(Sum('amount'))['amount__sum'] or 0
-    today_withdrawals = Withdrawal.objects.filter(
-        status='approved', processed_at__date=today
-    ).aggregate(Sum('amount'))['amount__sum'] or 0
-    pending_withdrawals = Withdrawal.objects.filter(status='pending').aggregate(Sum('amount'))['amount__sum'] or 0
-    pending_withdrawal_count = Withdrawal.objects.filter(status='pending').count()
-
-    # Total deposited (approved packages)
-    total_deposited = PackagePayment.objects.filter(status='approved').aggregate(
-        Sum('amount'))['amount__sum'] or 0
-
-    # Referral commissions
     from referrals.models import ReferralEarning
-    total_referral_commission = ReferralEarning.objects.aggregate(
-        Sum('amount'))['amount__sum'] or 0
 
-    # Earnings breakdown
-    task_earnings = Transaction.objects.filter(
-        transaction_type='task'
-    ).aggregate(Sum('amount'))['amount__sum'] or 0
+    users = User.objects.aggregate(
+        total=Count('id'),
+        active=Count('id', filter=Q(is_active=True)),
+        new_today=Count('id', filter=Q(created_at__date=today)),
+        blocked=Count('id', filter=Q(is_active=False)),
+    )
+    approved_users = User.objects.filter(package_payments__status='approved').distinct().count()
 
-    manual_additions = Transaction.objects.filter(
-        transaction_type='bonus',
-        description__icontains='Admin bonus'
-    ).aggregate(Sum('amount'))['amount__sum'] or 0
+    packages = PackagePayment.objects.aggregate(
+        total_deposited=Sum('amount', filter=Q(status='approved')),
+        today_deposited=Sum('amount', filter=Q(status='approved', processed_at__date=today)),
+        today_approved=Count('user', distinct=True, filter=Q(status='approved', processed_at__date=today)),
+    )
 
-    # Manual subtractions â€” negative balance edits (we track via description)
-    manual_subtractions = Transaction.objects.filter(
-        transaction_type='bonus',
-        description__icontains='Admin deduct'
-    ).aggregate(Sum('amount'))['amount__sum'] or 0
+    wallets = Wallet.objects.aggregate(total_earnings=Sum('total_earned'))
+    withdrawals = Withdrawal.objects.aggregate(
+        total=Sum('amount', filter=Q(status='approved')),
+        today=Sum('amount', filter=Q(status='approved', processed_at__date=today)),
+        pending_amt=Sum('amount', filter=Q(status='pending')),
+        pending_count=Count('id', filter=Q(status='pending')),
+    )
+    total_referral_commission = ReferralEarning.objects.aggregate(s=Sum('amount'))['s'] or 0
 
+    tx = Transaction.objects.aggregate(
+        task_earnings=Sum('amount', filter=Q(transaction_type='task')),
+        manual_additions=Sum('amount', filter=Q(transaction_type='bonus', description__icontains='Admin bonus')),
+        manual_subtractions=Sum('amount', filter=Q(transaction_type='bonus', description__icontains='Admin deduct')),
+    )
+    tasks = Task.objects.aggregate(
+        total=Count('id'),
+        active=Count('id', filter=Q(is_active=True)),
+    )
+    user_tasks = UserTask.objects.aggregate(
+        completed_today=Count('id', filter=Q(completed_at__date=today, status='verified')),
+        total_completed=Count('id', filter=Q(status='verified')),
+    )
+    fraud = FraudDetection.objects.aggregate(
+        alerts=Count('id', filter=Q(is_resolved=False)),
+        critical=Count('id', filter=Q(is_resolved=False, severity='critical')),
+    )
+
+    total_users = users['total'] or 0
+    active_users = users['active'] or 0
+    new_users_today = users['new_today'] or 0
+    blocked_users = users['blocked'] or 0
+    today_approved = packages['today_approved'] or 0
+    today_deposited = packages['today_deposited'] or 0
+    total_earnings = wallets['total_earnings'] or 0
+    total_withdrawals = withdrawals['total'] or 0
+    today_withdrawals = withdrawals['today'] or 0
+    pending_withdrawals = withdrawals['pending_amt'] or 0
+    pending_withdrawal_count = withdrawals['pending_count'] or 0
+    total_deposited = packages['total_deposited'] or 0
+    task_earnings = tx['task_earnings'] or 0
+    manual_additions = tx['manual_additions'] or 0
+    manual_subtractions = tx['manual_subtractions'] or 0
     net_manual = float(manual_additions or 0) - float(manual_subtractions or 0)
-
-    # Task stats
-    total_tasks = Task.objects.count()
-    active_tasks = Task.objects.filter(is_active=True).count()
-    completed_tasks_today = UserTask.objects.filter(completed_at__date=today, status='verified').count()
-    total_completed_tasks = UserTask.objects.filter(status='verified').count()
-
-    # Fraud stats
-    fraud_alerts = FraudDetection.objects.filter(is_resolved=False).count()
-    critical_frauds = FraudDetection.objects.filter(is_resolved=False, severity='critical').count()
-
+    total_tasks = tasks['total'] or 0
+    active_tasks = tasks['active'] or 0
+    completed_tasks_today = user_tasks['completed_today'] or 0
+    total_completed_tasks = user_tasks['total_completed'] or 0
+    fraud_alerts = fraud['alerts'] or 0
+    critical_frauds = fraud['critical'] or 0
     revenue = float(total_earnings) - float(total_withdrawals)
 
     return Response({
@@ -169,6 +171,14 @@ def _wallet_to_rs(amount):
     return float(amount or 0) * 100
 
 
+def _as_date(value):
+    if value is None:
+        return None
+    if hasattr(value, 'date') and callable(value.date):
+        return value.date()
+    return value
+
+
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def admin_dashboard_charts(request):
@@ -178,6 +188,32 @@ def admin_dashboard_charts(request):
     days = min(30, max(7, int(request.GET.get('days', 14))))
     end_date = date.today()
     start_date = end_date - timedelta(days=days - 1)
+
+    users_by_day = {
+        _as_date(row['d']): row['c']
+        for row in User.objects.filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
+        .annotate(d=TruncDate('created_at'))
+        .values('d')
+        .annotate(c=Count('id'))
+    }
+    deps_by_day = {
+        _as_date(row['d']): float(row['s'] or 0)
+        for row in PackagePayment.objects.filter(
+            status='approved', processed_at__date__gte=start_date, processed_at__date__lte=end_date
+        ).annotate(d=TruncDate('processed_at')).values('d').annotate(s=Sum('amount'))
+    }
+    wdr_by_day = {
+        _as_date(row['d']): _wallet_to_rs(row['s'])
+        for row in Withdrawal.objects.filter(
+            status='approved', processed_at__date__gte=start_date, processed_at__date__lte=end_date
+        ).annotate(d=TruncDate('processed_at')).values('d').annotate(s=Sum('amount'))
+    }
+    ref_by_day = {
+        _as_date(row['d']): _wallet_to_rs(row['s'])
+        for row in ReferralEarning.objects.filter(
+            created_at__date__gte=start_date, created_at__date__lte=end_date
+        ).annotate(d=TruncDate('created_at')).values('d').annotate(s=Sum('amount'))
+    }
 
     labels = []
     new_users = []
@@ -189,33 +225,15 @@ def admin_dashboard_charts(request):
     for i in range(days):
         d = start_date + timedelta(days=i)
         labels.append(d.strftime('%d %b'))
-
-        new_users.append(User.objects.filter(created_at__date=d).count())
-
-        dep = PackagePayment.objects.filter(
-            status='approved', processed_at__date=d
-        ).aggregate(Sum('amount'))['amount__sum'] or 0
-        deposits_rs.append(float(dep))
-
-        wdr = Withdrawal.objects.filter(
-            status='approved', processed_at__date=d
-        ).aggregate(Sum('amount'))['amount__sum'] or 0
-        withdrawals_rs.append(_wallet_to_rs(wdr))
-
-        ref = ReferralEarning.objects.filter(created_at__date=d).aggregate(
-            Sum('amount'))['amount__sum'] or 0
-        referral_payout_rs.append(_wallet_to_rs(ref))
-
+        new_users.append(users_by_day.get(d, 0))
+        deposits_rs.append(deps_by_day.get(d, 0))
+        withdrawals_rs.append(wdr_by_day.get(d, 0))
+        referral_payout_rs.append(ref_by_day.get(d, 0))
         net_profit_rs.append(deposits_rs[-1] - withdrawals_rs[-1] - referral_payout_rs[-1])
 
-    premium_user_ids = User.objects.filter(
-        package_payments__status='approved'
-    ).values_list('id', flat=True).distinct()
-    premium_users = User.objects.filter(
-        package_payments__status='approved'
-    ).distinct().count()
+    premium_users = User.objects.filter(package_payments__status='approved').distinct().count()
     total_users = User.objects.count()
-    free_users = User.objects.exclude(id__in=premium_user_ids).count()
+    free_users = max(0, total_users - premium_users)
 
     pending_package_users = PackagePayment.objects.filter(
         status='pending'
@@ -358,13 +376,13 @@ def get_all_users(request):
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = max(1, min(page, total_pages))
     start = (page - 1) * page_size
-    users = qs[start:start + page_size]
+    users = qs.select_related('wallet')[start:start + page_size]
 
     user_data = []
     for user in users:
         try:
             balance = user.wallet.main_balance
-        except:
+        except Wallet.DoesNotExist:
             balance = 0
         user_data.append({
             'id': user.id,
@@ -504,7 +522,7 @@ def get_all_withdrawals(request):
     else:
         withdrawals = Withdrawal.objects.filter(status=status_filter)
     
-    withdrawals = withdrawals.order_by('-created_at')[:100]
+    withdrawals = withdrawals.select_related('user').order_by('-created_at')[:100]
     
     withdrawal_data = []
     for w in withdrawals:
@@ -636,14 +654,19 @@ def pending_package_count(request):
 def list_package_payments(request):
     status_filter = request.GET.get('status', 'all')
     user_id = request.GET.get('user', None)
-    qs = PackagePayment.objects.select_related('user').only(
-        'id', 'package_name', 'amount', 'status', 'screenshot', 'admin_note', 'submitted_at',
-        'user__username', 'user__email'
-    )
+    include_shot = status_filter == 'pending'
+    fields = [
+        'id', 'package_name', 'amount', 'status', 'admin_note', 'submitted_at',
+        'user__username', 'user__email',
+    ]
+    if include_shot:
+        fields.append('screenshot')
+    qs = PackagePayment.objects.select_related('user').only(*fields)
     if status_filter != 'all':
         qs = qs.filter(status=status_filter)
     if user_id:
         qs = qs.filter(user_id=user_id)
+    qs = qs[:50]
     data = [
         {
             'id': p.id,
@@ -652,7 +675,7 @@ def list_package_payments(request):
             'package_name': p.package_name,
             'amount': p.amount,
             'status': p.status,
-            'screenshot': p.screenshot,
+            'screenshot': p.screenshot if include_shot else None,
             'admin_note': p.admin_note,
             'submitted_at': p.submitted_at,
         }
@@ -787,10 +810,10 @@ def get_user_withdrawals(request, user_id):
 @permission_classes([IsAdminUser])
 def get_user_detail(request, user_id):
     try:
-        user = User.objects.select_related('wallet').get(id=user_id)
+        user = User.objects.select_related('wallet', 'referred_by').get(id=user_id)
         try:
             wallet = user.wallet
-        except:
+        except Wallet.DoesNotExist:
             wallet, _ = Wallet.objects.get_or_create(user=user)
 
         # Run these 3 queries in parallel using aggregation
@@ -1004,18 +1027,24 @@ def all_approved_users(request):
     today = date.today()
     users = User.objects.filter(
         package_payments__status='approved'
-    ).distinct().select_related('wallet').order_by('-created_at')
+    ).distinct().select_related('wallet').prefetch_related(
+        Prefetch(
+            'package_payments',
+            queryset=PackagePayment.objects.filter(status='approved').order_by('-submitted_at'),
+            to_attr='approved_pkgs',
+        )
+    ).order_by('-created_at')
 
     today_approved = PackagePayment.objects.filter(
         status='approved', processed_at__date=today
-    ).select_related('user').count()
+    ).values('user').distinct().count()
 
     data = []
     for u in users:
-        pkg = PackagePayment.objects.filter(user=u, status='approved').order_by('-submitted_at').first()
+        pkg = u.approved_pkgs[0] if getattr(u, 'approved_pkgs', None) else None
         try:
             bal = float(u.wallet.main_balance)
-        except:
+        except Wallet.DoesNotExist:
             bal = 0
         data.append({
             'id': u.id,
@@ -1039,7 +1068,7 @@ def new_user_requests(request):
     today = date.today()
     pending = PackagePayment.objects.filter(
         status='pending'
-    ).select_related('user').order_by('-submitted_at')
+    ).select_related('user').order_by('-submitted_at')[:50]
 
     data = [{
         'id': p.id,
@@ -1214,10 +1243,10 @@ def get_user_transactions(request, user_id):
 def get_user_full(request, user_id):
     """Single endpoint â€” returns all user data in one call"""
     try:
-        user = User.objects.select_related('wallet').get(id=user_id)
+        user = User.objects.select_related('wallet', 'referred_by').get(id=user_id)
         try:
             wallet = user.wallet
-        except:
+        except Wallet.DoesNotExist:
             wallet, _ = Wallet.objects.get_or_create(user=user)
 
         package = PackagePayment.objects.filter(user=user, status='approved').only('id', 'package_name').first()

@@ -405,7 +405,7 @@ def team_member_rows(user, limit=200):
 
 def referral_link_for(user, settings=None):
     settings = settings or get_site_settings()
-    base = (settings.frontend_url or 'https://cornflowercashflow.online').rstrip('/')
+    base = (settings.frontend_url or 'https://instovaearn.com').rstrip('/')
     return f'{base}/register?ref={user.referral_code}'
 
 

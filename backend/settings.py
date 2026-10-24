@@ -145,6 +145,15 @@ CORS_ALLOWED_ORIGINS = [
     "https://cornflourfrontend.vercel.app",
     "https://cornflowercashflow.online",
     "https://www.cornflowercashflow.online",
+    "https://instovaearn.com",
+    "https://www.instovaearn.com",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://instovaearn.com",
+    "https://www.instovaearn.com",
+    "https://cornflowercashflow.online",
+    "https://www.cornflowercashflow.online",
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False

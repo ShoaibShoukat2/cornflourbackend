@@ -37,7 +37,7 @@ class SiteSettings(models.Model):
     bank_transfer_enabled = models.BooleanField(default=True)
     approval_hours = models.PositiveIntegerField(default=5)
     support_phone = models.CharField(max_length=30, blank=True, default='')
-    frontend_url = models.CharField(max_length=300, blank=True, default='https://cornflowercashflow.online')
+    frontend_url = models.CharField(max_length=300, blank=True, default='https://instovaearn.com')
     minimum_withdrawal_first = models.DecimalField(max_digits=10, decimal_places=2, default=0.50)
     l1_package_rate = models.DecimalField(max_digits=5, decimal_places=2, default=25)
     l2_package_rate = models.DecimalField(max_digits=5, decimal_places=2, default=3)

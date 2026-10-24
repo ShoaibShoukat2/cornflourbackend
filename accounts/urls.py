@@ -26,4 +26,7 @@ urlpatterns = [
     path('payment-account/', admin_views.get_payment_account, name='get_payment_account'),
     path('submit-payment/', admin_views.submit_package_payment, name='submit_package_payment'),
     path('package-status/', admin_views.my_package_status, name='my_package_status'),
+    path('upgrade-options/', admin_views.upgrade_options, name='upgrade_options'),
+    path('upgrade-request/', admin_views.submit_upgrade_request, name='submit_upgrade_request'),
+    path('upgrade-requests/', admin_views.my_upgrade_requests, name='my_upgrade_requests'),
 ]

@@ -324,6 +324,13 @@ def site_settings(request):
         'approval_hours': settings.approval_hours,
         'support_phone': settings.support_phone,
         'frontend_url': settings.frontend_url,
+        'upgrade_payment_method': settings.upgrade_payment_method,
+        'upgrade_account_number': settings.upgrade_account_number,
+        'upgrade_trade_id_note': settings.upgrade_trade_id_note,
+        'upgrade_center_number': settings.upgrade_center_number,
+        'upgrade_proof_note': settings.upgrade_proof_note,
+        'upgrade_submit_note': settings.upgrade_submit_note,
+        'upgrade_rules': settings.upgrade_rules,
         'minimum_withdrawal_first': settings.minimum_withdrawal_first,
         'package_prices': package_prices(settings),
     })
@@ -1339,4 +1346,94 @@ def get_user_full(request, user_id):
         })
     except User.DoesNotExist:
         return Response({'error': 'User not found'}, status=404)
+
+
+UPGRADE_ERRORS = {
+    'transaction_required': 'Transaction ID is required.',
+    'proof_required': 'Upload a payment screenshot.',
+    'proof_large': 'Screenshot is too large. Maximum size is 3MB.',
+    'unknown_package': 'Unknown package.',
+    'pending_exists': 'You already have a pending upgrade request.',
+    'transaction_used': 'This transaction ID is already used on another upgrade request.',
+    'no_package': 'Buy a package before upgrading.',
+    'not_higher': 'You can only upgrade to a higher package.',
+    'nothing_due': 'Your verified payment already covers this package.',
+}
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def upgrade_options(request):
+    from administration.upgrades import upgrade_quote
+    return Response(upgrade_quote(request.user))
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def submit_upgrade_request(request):
+    from administration.upgrades import _request_payload, submit_upgrade
+    code, upgrade = submit_upgrade(
+        request.user,
+        request.data.get('to_package'),
+        request.data.get('transaction_id'),
+        request.data.get('screenshot'),
+    )
+    if code != 'ok':
+        return Response({'error': UPGRADE_ERRORS.get(code, code)}, status=400)
+    return Response({'message': 'Upgrade request submitted. Status: Pending.', 'request': _request_payload(upgrade)}, status=201)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def my_upgrade_requests(request):
+    from administration.models import PackageUpgrade
+    from administration.upgrades import _request_payload
+    rows = PackageUpgrade.objects.filter(user=request.user).select_related('user')
+    return Response([_request_payload(row) for row in rows])
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def list_upgrade_requests(request):
+    from administration.models import PackageUpgrade
+    from administration.upgrades import _request_payload
+    status_filter = request.GET.get('status', 'all')
+    qs = PackageUpgrade.objects.select_related('user').order_by('-submitted_at')
+    if status_filter != 'all':
+        qs = qs.filter(status=status_filter)
+    include_proof = status_filter in ('pending', 'all')
+    return Response({
+        'requests': [_request_payload(row, include_proof=include_proof) for row in qs[:100]],
+        'pending': PackageUpgrade.objects.filter(status='pending').count(),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def approve_upgrade_request(request, upgrade_id):
+    from administration.upgrades import approve_upgrade
+    result = approve_upgrade(upgrade_id, request.data.get('note', 'Approved'))
+    if result == 'missing':
+        return Response({'error': 'Not found'}, status=404)
+    if result == 'already':
+        return Response({'error': 'Upgrade already approved'}, status=400)
+    if result == 'transaction_used':
+        return Response({'error': 'This transaction ID was already used for an approved upgrade.'}, status=400)
+    if result != 'ok':
+        return Response({'error': 'This request can no longer be approved.'}, status=400)
+    return Response({'message': 'Upgrade approved'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def reject_upgrade_request(request, upgrade_id):
+    from administration.upgrades import reject_upgrade
+    result = reject_upgrade(upgrade_id, request.data.get('reason', 'Rejected'))
+    if result == 'missing':
+        return Response({'error': 'Not found'}, status=404)
+    if result == 'locked':
+        return Response({'error': 'Approved upgrades cannot be rejected.'}, status=400)
+    if result == 'already':
+        return Response({'error': 'Upgrade already rejected'}, status=400)
+    return Response({'message': 'Upgrade rejected'})
 

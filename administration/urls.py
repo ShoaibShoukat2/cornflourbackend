@@ -51,4 +51,8 @@ urlpatterns = [
     path('level-settings/', views.level_settings, name='level_settings'),
     path('payment-accounts/', views.payment_accounts_all, name='payment_accounts_all'),
     path('payment-accounts/<int:account_id>/delete/', views.delete_payment_account, name='delete_payment_account'),
+
+    path('upgrade-requests/', views.list_upgrade_requests, name='list_upgrade_requests'),
+    path('approve-upgrade/<int:upgrade_id>/', views.approve_upgrade_request, name='approve_upgrade_request'),
+    path('reject-upgrade/<int:upgrade_id>/', views.reject_upgrade_request, name='reject_upgrade_request'),
 ]

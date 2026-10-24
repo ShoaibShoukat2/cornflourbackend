@@ -176,3 +176,101 @@ class SystemLogicTests(TestCase):
         }, format='json')
         self.assertEqual(response.status_code, 403)
         self.assertIn('Fraud', response.data['error'])
+
+
+class PackageUpgradeTests(TestCase):
+    def setUp(self):
+        from referrals.services import get_site_settings
+        settings_row = get_site_settings()
+        settings_row.package_prices = {
+            'normal': 600, 'super': 1500, 'premium': 3200, 'high_octane': 4500,
+        }
+        settings_row.save()
+        self.client = APIClient()
+        self.referrer = make_user('up-ref@test.com', 'UpRef')
+        self.user = make_user('up-user@test.com', 'UpUser')
+        self.user.referred_by = self.referrer
+        self.user.save(update_fields=['referred_by'])
+        self.original = PackagePayment.objects.create(
+            user=self.user,
+            package_name='normal',
+            amount=600,
+            screenshot='data:image/png;base64,aa',
+            status='approved',
+            commission_paid=True,
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=self.user).key}')
+        admin = make_user('up-admin@test.com', 'UpAdmin')
+        admin.is_staff = True
+        admin.is_superuser = True
+        admin.save(update_fields=['is_staff', 'is_superuser'])
+        self.admin_client = APIClient()
+        self.admin_client.credentials(HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=admin).key}')
+
+    def test_upgrade_charges_only_the_remaining_amount(self):
+        from administration.upgrades import current_package_name
+
+        quote = self.client.get('/api/auth/upgrade-options/')
+        self.assertEqual(quote.status_code, 200, quote.data)
+        super_pkg = next(item for item in quote.data['packages'] if item['key'] == 'super')
+        normal_pkg = next(item for item in quote.data['packages'] if item['key'] == 'normal')
+        self.assertEqual(len(quote.data['instructions']), 7)
+        self.assertEqual(super_pkg['remaining'], 900)
+        self.assertTrue(super_pkg['can_upgrade'])
+        self.assertFalse(normal_pkg['can_upgrade'])
+
+        created = self.client.post('/api/auth/upgrade-request/', {
+            'to_package': 'super',
+            'transaction_id': 'TXN-900',
+            'screenshot': 'data:image/png;base64,proof',
+        }, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data['request']['status'], 'pending')
+        self.assertEqual(created.data['request']['remaining_amount'], 900)
+        self.assertEqual(current_package_name(self.user), 'normal')
+
+        duplicate = self.client.post('/api/auth/upgrade-request/', {
+            'to_package': 'premium',
+            'transaction_id': 'TXN-OTHER',
+            'screenshot': 'data:image/png;base64,proof',
+        }, format='json')
+        self.assertEqual(duplicate.status_code, 400)
+
+        upgrade_id = created.data['request']['id']
+        approved = self.admin_client.post(f'/api/admin/approve-upgrade/{upgrade_id}/', {'note': 'ok'}, format='json')
+        self.assertEqual(approved.status_code, 200, approved.data)
+        again = self.admin_client.post(f'/api/admin/approve-upgrade/{upgrade_id}/', {}, format='json')
+        self.assertEqual(again.status_code, 400)
+
+        self.original.refresh_from_db()
+        self.assertEqual(self.original.status, 'approved')
+        self.assertEqual(self.original.amount, Decimal('600'))
+        self.assertEqual(current_package_name(self.user), 'super')
+        self.referrer.wallet.refresh_from_db()
+        self.assertEqual(self.referrer.wallet.main_balance, Decimal('2.25'))
+
+        reused = self.client.post('/api/auth/upgrade-request/', {
+            'to_package': 'premium',
+            'transaction_id': 'TXN-900',
+            'screenshot': 'data:image/png;base64,proof',
+        }, format='json')
+        self.assertEqual(reused.status_code, 400)
+
+    def test_reject_keeps_the_current_package(self):
+        from administration.upgrades import current_package_name
+
+        created = self.client.post('/api/auth/upgrade-request/', {
+            'to_package': 'super',
+            'transaction_id': 'TXN-REJECT',
+            'screenshot': 'data:image/png;base64,proof',
+        }, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        rejected = self.admin_client.post(
+            f"/api/admin/reject-upgrade/{created.data['request']['id']}/",
+            {'reason': 'Amount mismatch'},
+            format='json',
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.assertEqual(current_package_name(self.user), 'normal')
+        self.referrer.wallet.refresh_from_db()
+        self.assertEqual(self.referrer.wallet.main_balance, Decimal('0.00'))

@@ -49,6 +49,28 @@ class SiteSettings(models.Model):
     level_requirements = models.JSONField(default=empty_list, blank=True)
     level_bonuses = models.JSONField(default=empty_list, blank=True)
     level_rewards = models.JSONField(default=empty_dict, blank=True)
+    upgrade_payment_method = models.CharField(
+        max_length=300, blank=True,
+        default='Send only the remaining amount by JazzCash or EasyPaisa.',
+    )
+    upgrade_account_number = models.CharField(max_length=100, blank=True, default='')
+    upgrade_trade_id_note = models.CharField(
+        max_length=300, blank=True,
+        default='Enter the Transaction ID / Trade ID exactly as it appears on your payment receipt.',
+    )
+    upgrade_center_number = models.CharField(max_length=100, blank=True, default='')
+    upgrade_proof_note = models.CharField(
+        max_length=300, blank=True,
+        default='Upload a clear payment screenshot that shows the amount, time, and transaction ID.',
+    )
+    upgrade_submit_note = models.CharField(
+        max_length=300, blank=True,
+        default='Select the higher package, enter the transaction ID, upload the proof, and submit the request.',
+    )
+    upgrade_rules = models.TextField(
+        blank=True,
+        default='Pay only the remaining amount. Your previous verified payment stays saved and is not charged again. The package changes only after admin approval. One transaction ID can be approved only once.',
+    )
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
@@ -98,6 +120,34 @@ class PackagePayment(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.status}"
+
+
+class PackageUpgrade(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='package_upgrades')
+    from_package = models.CharField(max_length=20)
+    to_package = models.CharField(max_length=20)
+    previous_paid = models.DecimalField(max_digits=10, decimal_places=2)
+    package_price = models.DecimalField(max_digits=10, decimal_places=2)
+    remaining_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction_id = models.CharField(max_length=120)
+    screenshot = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    admin_note = models.TextField(blank=True)
+    commission_paid = models.BooleanField(default=False)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-submitted_at']
+
+    def __str__(self):
+        return f'{self.user_id} {self.from_package} -> {self.to_package} {self.status}'
+
 
 class Announcement(models.Model):
     title = models.CharField(max_length=200)

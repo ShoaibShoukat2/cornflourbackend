@@ -509,6 +509,17 @@ def build_dashboard(user):
     wallet, _ = Wallet.objects.get_or_create(user=user)
     payment = PackagePayment.objects.filter(user=user).order_by('-submitted_at').first()
     plan = approval_meta(payment)
+    from administration.upgrades import current_package_name, total_verified_paid
+    from administration.models import PackageUpgrade
+    active_name = current_package_name(user)
+    if active_name:
+        plan['status'] = 'approved'
+        plan['package_name'] = active_name
+        plan['package_label'] = PLAN_NAMES.get(active_name, active_name)
+        plan['total_paid'] = float(total_verified_paid(user))
+        plan['amount'] = float(package_prices().get(active_name, plan.get('amount') or 0))
+    pending_upgrade = PackageUpgrade.objects.filter(user=user, status='pending').first()
+    plan['upgrade_status'] = pending_upgrade.status if pending_upgrade else 'none'
     summary = team_summary(user)
     progress = level_progress(user, summary['direct'])
     bonus_total = Transaction.objects.filter(user=user, transaction_type='bonus').aggregate(total=Sum('amount'))['total'] or Decimal('0')

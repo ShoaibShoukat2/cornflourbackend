@@ -36,15 +36,9 @@ def user_has_package(user):
 
 
 def get_user_package(user):
-    """Returns the approved package_name or None"""
-    from administration.models import PackagePayment
-    pkg = PackagePayment.objects.filter(user=user, status='approved').order_by('-submitted_at').first()
-    if not pkg:
-        return None
-    try:
-        return pkg.package_name
-    except Exception:
-        return 'normal'
+    """Active package, including an approved upgrade."""
+    from administration.upgrades import current_package_name
+    return current_package_name(user)
 
 
 def get_daily_task_limit(user):

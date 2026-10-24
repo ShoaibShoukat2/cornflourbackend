@@ -19,6 +19,9 @@ urlpatterns = [
     path('forgot-password/', views.forgot_password, name='forgot_password'),
     path('reset-password/', views.reset_password, name='reset_password'),
     path('dashboard-stats/', views.dashboard_stats, name='dashboard_stats'),
+    path('notifications/', views.notifications_list, name='notifications_list'),
+    path('notifications/read/', views.notifications_read, name='notifications_read'),
+    path('plans/', views.public_plans, name='public_plans'),
     # Package
     path('payment-account/', admin_views.get_payment_account, name='get_payment_account'),
     path('submit-payment/', admin_views.submit_package_payment, name='submit_package_payment'),

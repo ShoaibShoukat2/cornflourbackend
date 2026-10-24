@@ -1,9 +1,19 @@
+from decimal import Decimal
+
 from django.db import models
 from django.conf import settings
 
+
+def empty_dict():
+    return {}
+
+
+def empty_list():
+    return []
+
 class SiteSettings(models.Model):
     minimum_withdrawal = models.DecimalField(max_digits=10, decimal_places=2, default=5.00)
-    signup_bonus = models.DecimalField(max_digits=10, decimal_places=2, default=1.00)
+    signup_bonus = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.50'))
     daily_bonus = models.DecimalField(max_digits=10, decimal_places=2, default=0.10)
     referral_bonus = models.DecimalField(max_digits=10, decimal_places=2, default=0.50)
     referral_commission = models.DecimalField(max_digits=5, decimal_places=2, default=10.00)
@@ -25,6 +35,20 @@ class SiteSettings(models.Model):
     paypal_enabled = models.BooleanField(default=True)
     crypto_enabled = models.BooleanField(default=True)
     bank_transfer_enabled = models.BooleanField(default=True)
+    approval_hours = models.PositiveIntegerField(default=5)
+    support_phone = models.CharField(max_length=30, blank=True, default='')
+    frontend_url = models.CharField(max_length=300, blank=True, default='https://cornflowercashflow.online')
+    minimum_withdrawal_first = models.DecimalField(max_digits=10, decimal_places=2, default=0.50)
+    l1_package_rate = models.DecimalField(max_digits=5, decimal_places=2, default=25)
+    l2_package_rate = models.DecimalField(max_digits=5, decimal_places=2, default=3)
+    l3_package_rate = models.DecimalField(max_digits=5, decimal_places=2, default=1)
+    l1_task_rate = models.DecimalField(max_digits=5, decimal_places=2, default=1)
+    l2_task_rate = models.DecimalField(max_digits=5, decimal_places=2, default=3)
+    l3_task_rate = models.DecimalField(max_digits=5, decimal_places=2, default=1)
+    package_prices = models.JSONField(default=empty_dict, blank=True)
+    level_requirements = models.JSONField(default=empty_list, blank=True)
+    level_bonuses = models.JSONField(default=empty_list, blank=True)
+    level_rewards = models.JSONField(default=empty_dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
@@ -64,6 +88,7 @@ class PackagePayment(models.Model):
     screenshot = models.TextField()  # base64 or URL
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=800)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    commission_paid = models.BooleanField(default=False)
     admin_note = models.TextField(blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)

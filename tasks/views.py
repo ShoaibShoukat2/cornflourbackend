@@ -8,9 +8,11 @@ from wallet.models import Wallet, Transaction
 from django.utils import timezone
 from datetime import date
 from decimal import Decimal
+from django.db import transaction as db_transaction
 from referrals.utils import get_weekly_joining_status, weekly_joining_task_block
+from referrals.services import credit_user, notify, pay_task_upline, reward_for_level, get_site_settings
 
-# Level-based daily task reward
+# Kept for imports that still read the default table. Live rewards come from settings.
 LEVEL_REWARDS = {
     0: Decimal('0.07'),  1: Decimal('0.15'),  2: Decimal('0.22'),
     3: Decimal('0.26'),  4: Decimal('0.32'),  5: Decimal('0.38'),
@@ -140,111 +142,37 @@ def complete_task(request):
         verification_input = serializer.validated_data.get('verification_input', '')
         
         try:
-            user_task = UserTask.objects.get(user=request.user, task_id=task_id, status='pending', date=today)
+            with db_transaction.atomic():
+                user_task = UserTask.objects.select_for_update().get(
+                    user=request.user, task_id=task_id, status='pending', date=today
+                )
+                task = user_task.task
+                if task.verification_code and task.verification_code != verification_input:
+                    user_task.status = 'rejected'
+                    user_task.save(update_fields=['status'])
+                    return Response({'error': 'Invalid verification code'}, status=status.HTTP_400_BAD_REQUEST)
+
+                user_task.status = 'verified'
+                user_task.completed_at = timezone.now()
+                user_task.save(update_fields=['status', 'completed_at'])
+                task.current_completions += 1
+                task.save(update_fields=['current_completions'])
+
+                user_level = min(request.user.level, 9)
+                reward = reward_for_level(user_level)
+                credit_user(
+                    request.user,
+                    reward,
+                    'task',
+                    f'Completed task: {task.title} (Level {user_level})',
+                )
+                request.user.points += 1
+                request.user.save(update_fields=['points'])
+                request.user.update_level()
+                pay_task_upline(request.user, reward)
+                wallet = Wallet.objects.get(user=request.user)
         except UserTask.DoesNotExist:
             return Response({'error': 'Task not found or already completed today'}, status=status.HTTP_404_NOT_FOUND)
-        
-        task = user_task.task
-        
-        # Verification logic
-        if task.verification_code and task.verification_code != verification_input:
-            user_task.status = 'rejected'
-            user_task.save()
-            return Response({'error': 'Invalid verification code'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        user_task.status = 'verified'
-        user_task.completed_at = timezone.now()
-        user_task.save()
-
-        # Update task completions
-        task.current_completions += 1
-        task.save()
-
-        # Level-based reward
-        user_level = min(request.user.level, 9)
-        reward = LEVEL_REWARDS.get(user_level, LEVEL_REWARDS[0])
-
-        # Add reward to wallet — use get_or_create to be safe
-        wallet, _ = Wallet.objects.get_or_create(user=request.user)
-        wallet.main_balance += reward
-        wallet.total_earned += reward
-        wallet.save()
-
-        # Increment points and update level
-        request.user.points += 1
-        request.user.save(update_fields=['points'])
-        request.user.update_level()
-
-        Transaction.objects.create(
-            user=request.user,
-            transaction_type='task',
-            amount=reward,
-            description=f'Completed task: {task.title} (Level {user_level})'
-        )
-
-        # Level 1 referral commission on task earnings — 1%
-        if request.user.referred_by:
-            commission = reward * Decimal('0.01')
-            referrer = request.user.referred_by
-            ref_wallet, _ = Wallet.objects.get_or_create(user=referrer)
-            ref_wallet.main_balance += commission
-            ref_wallet.total_earned += commission
-            ref_wallet.save()
-            Transaction.objects.create(
-                user=referrer,
-                transaction_type='referral',
-                amount=commission,
-                description=f'1% task commission from {request.user.username}'
-            )
-            from referrals.models import ReferralEarning
-            ReferralEarning.objects.create(
-                referrer=referrer,
-                referred_user=request.user,
-                amount=commission,
-                earning_type='task_commission'
-            )
-
-            # Level 2 commission — 3% to referrer's referrer
-            if referrer.referred_by:
-                commission_l2 = reward * Decimal('0.03')
-                referrer_l2 = referrer.referred_by
-                ref_wallet_l2, _ = Wallet.objects.get_or_create(user=referrer_l2)
-                ref_wallet_l2.main_balance += commission_l2
-                ref_wallet_l2.total_earned += commission_l2
-                ref_wallet_l2.save()
-                Transaction.objects.create(
-                    user=referrer_l2,
-                    transaction_type='referral',
-                    amount=commission_l2,
-                    description=f'3% L2 task commission from {request.user.username}'
-                )
-                ReferralEarning.objects.create(
-                    referrer=referrer_l2,
-                    referred_user=request.user,
-                    amount=commission_l2,
-                    earning_type='task_commission_l2'
-                )
-
-                # Level 3 commission — 1% to referrer's referrer's referrer
-                if referrer_l2.referred_by:
-                    commission_l3 = reward * Decimal('0.01')
-                    referrer_l3 = referrer_l2.referred_by
-                    ref_wallet_l3, _ = Wallet.objects.get_or_create(user=referrer_l3)
-                    ref_wallet_l3.main_balance += commission_l3
-                    ref_wallet_l3.total_earned += commission_l3
-                    ref_wallet_l3.save()
-                    Transaction.objects.create(
-                        user=referrer_l3,
-                        transaction_type='referral',
-                        amount=commission_l3,
-                        description=f'1% L3 task commission from {request.user.username}'
-                    )
-                    ReferralEarning.objects.create(
-                        referrer=referrer_l3,
-                        referred_user=request.user,
-                        amount=commission_l3,
-                        earning_type='task_commission_l3'
-                    )
 
         return Response({
             'message': 'Task completed successfully',
@@ -274,20 +202,21 @@ def daily_login_bonus(request):
     if DailyLoginBonus.objects.filter(user=request.user, date=today).exists():
         return Response({'error': 'Daily bonus already claimed'}, status=status.HTTP_400_BAD_REQUEST)
     
-    bonus_amount = 0.10
+    bonus_amount = get_site_settings().daily_bonus
     bonus = DailyLoginBonus.objects.create(user=request.user, amount=bonus_amount)
-    
-    wallet = request.user.wallet
+
+    wallet, _ = Wallet.objects.get_or_create(user=request.user)
     wallet.bonus_balance += bonus_amount
     wallet.total_earned += bonus_amount
-    wallet.save()
-    
+    wallet.save(update_fields=['bonus_balance', 'total_earned', 'updated_at'])
+
     Transaction.objects.create(
         user=request.user,
         transaction_type='bonus',
         amount=bonus_amount,
         description='Daily login bonus'
     )
+    notify(request.user, 'Daily bonus', f'You received a daily bonus of Rs {int(Decimal(bonus_amount) * 100)}.', 'bonus')
     
     return Response({'message': 'Daily bonus claimed', 'amount': bonus_amount})
 

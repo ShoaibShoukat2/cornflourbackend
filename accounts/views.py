@@ -6,11 +6,12 @@ from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate, get_user_model
 from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, ChangePasswordSerializer
 from wallet.models import Wallet, Transaction
-from referrals.models import ReferralEarning, ReferralSettings
+from referrals.models import ReferralEarning
+from referrals.services import build_dashboard, credit_user, get_site_settings, notify
 from django.utils import timezone
 from datetime import timedelta
 from .utils import send_verification_email, send_otp_email
-import random
+from decimal import Decimal
 
 User = get_user_model()
 
@@ -20,35 +21,37 @@ def register(request):
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
-        
-        # Create wallet
-        wallet = Wallet.objects.create(user=user)
-        
-        # Signup bonus — Rs 50 (stored as 0.50 in decimal) added to main_balance so it's withdrawable
-        wallet.main_balance = 0.50
-        wallet.bonus_balance = 0.00
-        wallet.total_earned = 0.50
-        user.signup_bonus_claimed = True
-        user.save()
-        wallet.save()
-        
-        Transaction.objects.create(
-            user=user,
-            transaction_type='bonus',
-            amount=0.50,
-            description='Signup Bonus - Rs 50'
-        )
-        
-        # Referral bonus — 25% of package price given at package approval, not at signup
-        # No signup bonus to referrer here
-        if user.referred_by:
+        Wallet.objects.get_or_create(user=user)
+        settings = get_site_settings()
+        bonus = Decimal(str(settings.signup_bonus or 0))
+
+        if not user.signup_bonus_claimed and bonus > 0:
+            credit_user(
+                user,
+                bonus,
+                'bonus',
+                f'Signup bonus - Rs {int(bonus * 100)}',
+            )
+            user.signup_bonus_claimed = True
+            user.save(update_fields=['signup_bonus_claimed'])
+
+        if user.referred_by_id and not ReferralEarning.objects.filter(
+            referrer=user.referred_by, referred_user=user, earning_type='signup'
+        ).exists():
             ReferralEarning.objects.create(
                 referrer=user.referred_by,
                 referred_user=user,
                 amount=0,
-                earning_type='signup'
+                earning_type='signup',
             )
-        
+
+        notify(
+            user,
+            'Account created',
+            'Your account is created. Choose a plan next. It is reviewed within the approval time after payment.',
+            'registration',
+        )
+
         token = Token.objects.create(user=user)
         return Response({
             'token': token.key,
@@ -62,10 +65,15 @@ def register(request):
 def login(request):
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
-        user = authenticate(
-            username=serializer.validated_data['email'],
-            password=serializer.validated_data['password']
-        )
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
+        candidate = User.objects.filter(email=email).first()
+        if candidate and candidate.check_password(password) and (not candidate.is_active or candidate.is_blocked):
+            return Response(
+                {'error': candidate.block_reason or 'This account is blocked. Contact support.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        user = authenticate(username=email, password=password)
         
         if user:
             token, _ = Token.objects.get_or_create(user=user)
@@ -259,28 +267,48 @@ def reset_password(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def dashboard_stats(request):
-    user = request.user
-    wallet = user.wallet
-    
-    from tasks.models import UserTask
-    from referrals.models import ReferralEarning
-    
-    completed_tasks = UserTask.objects.filter(user=user, status='verified').count()
-    total_referrals = User.objects.filter(referred_by=user).count()
-    referral_earnings = sum(e.amount for e in ReferralEarning.objects.filter(referrer=user))
-    
+    data = build_dashboard(request.user)
+    data['user'] = UserSerializer(request.user).data
+    data['stats']['total_referrals'] = data['team']['direct']
+    data['stats']['referral_earnings'] = data['commissions']['total']
+    return Response(data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notifications_list(request):
+    from .models import Notification
+    notes = Notification.objects.filter(user=request.user)[:50]
     return Response({
-        'user': UserSerializer(user).data,
-        'wallet': {
-            'main_balance': wallet.main_balance,
-            'bonus_balance': wallet.bonus_balance,
-            'pending_balance': wallet.pending_balance,
-            'total_earned': wallet.total_earned,
-            'total_withdrawn': wallet.total_withdrawn,
-        },
-        'stats': {
-            'completed_tasks': completed_tasks,
-            'total_referrals': total_referrals,
-            'referral_earnings': referral_earnings,
-        }
+        'unread': Notification.objects.filter(user=request.user, is_read=False).count(),
+        'notifications': [
+            {
+                'id': note.id,
+                'title': note.title,
+                'message': note.message,
+                'category': note.category,
+                'is_read': note.is_read,
+                'created_at': note.created_at,
+            }
+            for note in notes
+        ],
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def notifications_read(request):
+    from .models import Notification
+    qs = Notification.objects.filter(user=request.user, is_read=False)
+    ids = request.data.get('ids')
+    if ids:
+        qs = qs.filter(id__in=ids)
+    updated = qs.update(is_read=True)
+    return Response({'updated': updated})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_plans(request):
+    from referrals.services import list_plans
+    return Response(list_plans())

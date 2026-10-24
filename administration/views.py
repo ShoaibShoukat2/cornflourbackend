@@ -306,6 +306,7 @@ def admin_dashboard_charts(request):
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def site_settings(request):
+    from referrals.services import package_prices
     settings, _ = SiteSettings.objects.get_or_create(id=1)
     return Response({
         'minimum_withdrawal': settings.minimum_withdrawal,
@@ -320,6 +321,11 @@ def site_settings(request):
         'site_name': settings.site_name,
         'whatsapp_channel_link': settings.whatsapp_channel_link,
         'whatsapp_community_link': settings.whatsapp_community_link,
+        'approval_hours': settings.approval_hours,
+        'support_phone': settings.support_phone,
+        'frontend_url': settings.frontend_url,
+        'minimum_withdrawal_first': settings.minimum_withdrawal_first,
+        'package_prices': package_prices(settings),
     })
 
 @api_view(['POST'])
@@ -327,10 +333,29 @@ def site_settings(request):
 def update_site_settings(request):
     settings, _ = SiteSettings.objects.get_or_create(id=1)
     
+    price_fields = {
+        'package_price_normal': 'normal',
+        'package_price_super': 'super',
+        'package_price_premium': 'premium',
+        'package_price_high_octane': 'high_octane',
+    }
+    prices = dict(settings.package_prices or {})
+    prices_changed = False
+    for form_key, plan_key in price_fields.items():
+        if form_key in request.data and request.data[form_key] not in (None, ''):
+            prices[plan_key] = int(float(request.data[form_key]))
+            prices_changed = True
+    if prices_changed:
+        settings.package_prices = prices
+
     for key, value in request.data.items():
+        if key in price_fields or key == 'package_prices':
+            continue
         if hasattr(settings, key):
             setattr(settings, key, value)
-    
+    if 'package_prices' in request.data and isinstance(request.data['package_prices'], dict):
+        settings.package_prices = request.data['package_prices']
+
     settings.save()
     return Response({'message': 'Settings updated successfully'})
 
@@ -342,6 +367,7 @@ def public_contact_links(request):
     return Response({
         'whatsapp_channel_link': settings.whatsapp_channel_link,
         'whatsapp_community_link': settings.whatsapp_community_link,
+        'support_phone': settings.support_phone,
     })
 
 @api_view(['GET'])
@@ -448,7 +474,8 @@ def add_bonus_to_user(request, user_id):
         if amount > 0:
             wallet.main_balance += amount
             wallet.total_earned += amount
-        # For negative (deduct tracking only â€” balance already set via edit-user)
+        else:
+            wallet.main_balance = max(wallet.main_balance + amount, 0)
         wallet.save()
 
         Transaction.objects.create(
@@ -467,23 +494,30 @@ def add_bonus_to_user(request, user_id):
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def approve_withdrawal(request, withdrawal_id):
+    from django.db import transaction
+    from referrals.services import money, notify
     try:
-        withdrawal = Withdrawal.objects.get(id=withdrawal_id)
-        
-        if withdrawal.status != 'pending':
-            return Response({'error': 'Withdrawal already processed'}, status=400)
-        
-        withdrawal.status = 'approved'
-        withdrawal.processed_at = timezone.now()
-        withdrawal.admin_note = request.data.get('note', 'Approved by admin')
-        withdrawal.save()
-        
-        # Update wallet
-        wallet = withdrawal.user.wallet
-        wallet.pending_balance -= withdrawal.amount
-        wallet.total_withdrawn += withdrawal.amount
-        wallet.save()
-        
+        with transaction.atomic():
+            withdrawal = Withdrawal.objects.select_for_update().get(id=withdrawal_id)
+            if withdrawal.status != 'pending':
+                return Response({'error': 'Withdrawal already processed'}, status=400)
+            wallet, _ = Wallet.objects.get_or_create(user=withdrawal.user)
+            wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
+            if wallet.pending_balance < withdrawal.amount:
+                return Response({'error': 'Pending balance does not cover this withdrawal'}, status=400)
+            withdrawal.status = 'approved'
+            withdrawal.processed_at = timezone.now()
+            withdrawal.admin_note = request.data.get('note', 'Approved by admin')
+            withdrawal.save()
+            wallet.pending_balance = money(wallet.pending_balance - withdrawal.amount)
+            wallet.total_withdrawn = money(wallet.total_withdrawn + withdrawal.amount)
+            wallet.save(update_fields=['pending_balance', 'total_withdrawn', 'updated_at'])
+        notify(
+            withdrawal.user,
+            'Withdrawal approved',
+            f'WD{withdrawal.id:06d} for Rs {int(withdrawal.amount * 100)} was approved.',
+            'withdrawal',
+        )
         return Response({'message': 'Withdrawal approved successfully'})
     except Withdrawal.DoesNotExist:
         return Response({'error': 'Withdrawal not found'}, status=404)
@@ -491,23 +525,35 @@ def approve_withdrawal(request, withdrawal_id):
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def reject_withdrawal(request, withdrawal_id):
+    from django.db import transaction
+    from referrals.services import money, notify
     try:
-        withdrawal = Withdrawal.objects.get(id=withdrawal_id)
-        
-        if withdrawal.status != 'pending':
-            return Response({'error': 'Withdrawal already processed'}, status=400)
-        
-        withdrawal.status = 'rejected'
-        withdrawal.processed_at = timezone.now()
-        withdrawal.admin_note = request.data.get('reason', 'Rejected by admin')
-        withdrawal.save()
-        
-        # Return money to user
-        wallet = withdrawal.user.wallet
-        wallet.pending_balance -= withdrawal.amount
-        wallet.main_balance += withdrawal.amount
-        wallet.save()
-        
+        with transaction.atomic():
+            withdrawal = Withdrawal.objects.select_for_update().get(id=withdrawal_id)
+            if withdrawal.status != 'pending':
+                return Response({'error': 'Withdrawal already processed'}, status=400)
+            wallet, _ = Wallet.objects.get_or_create(user=withdrawal.user)
+            wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
+            reason = request.data.get('reason', 'Rejected by admin')
+            withdrawal.status = 'rejected'
+            withdrawal.processed_at = timezone.now()
+            withdrawal.admin_note = reason
+            withdrawal.save()
+            wallet.pending_balance = money(max(wallet.pending_balance - withdrawal.amount, 0))
+            wallet.main_balance = money(wallet.main_balance + withdrawal.amount)
+            wallet.save(update_fields=['pending_balance', 'main_balance', 'updated_at'])
+            Transaction.objects.create(
+                user=withdrawal.user,
+                transaction_type='withdrawal',
+                amount=withdrawal.amount,
+                description=f'Withdrawal WD{withdrawal.id:06d} rejected and returned',
+            )
+        notify(
+            withdrawal.user,
+            'Withdrawal rejected',
+            f'WD{withdrawal.id:06d} was rejected. Rs {int(withdrawal.amount * 100)} is back in your available balance. {reason}',
+            'withdrawal',
+        )
         return Response({'message': 'Withdrawal rejected successfully'})
     except Withdrawal.DoesNotExist:
         return Response({'error': 'Withdrawal not found'}, status=404)
@@ -566,8 +612,11 @@ def get_payment_account(request):
 def submit_package_payment(request):
     screenshot = request.data.get('screenshot')
     package_name = request.data.get('package_name', 'normal')
-    amount_map = {'normal': 700, 'super': 1400, 'premium': 3200, 'high_octane': 4500}
-    amount = amount_map.get(package_name, 800)
+    from referrals.services import package_prices, get_site_settings, notify
+    prices = package_prices()
+    if package_name not in prices:
+        return Response({'error': 'Unknown plan'}, status=400)
+    amount = prices[package_name]
 
     if not screenshot:
         return Response({'error': 'Screenshot is required'}, status=400)
@@ -592,26 +641,26 @@ def submit_package_payment(request):
             screenshot=screenshot,
             amount=amount
         )
-    return Response({'message': 'Payment submitted! Your account will be activated within 24 hours after verification.'})
+    hours = get_site_settings().approval_hours or 5
+    notify(
+        request.user,
+        'Plan payment submitted',
+        f'Your {package_name} plan payment is pending. Approval time is {hours} hours.',
+        'plan',
+    )
+    return Response({
+        'message': f'Payment submitted. Your account will be reviewed within {hours} hours.',
+        'approval_hours': hours,
+        'status': 'pending',
+    })
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def my_package_status(request):
+    from referrals.services import approval_meta
     payment = PackagePayment.objects.filter(user=request.user).order_by('-submitted_at').first()
-    if not payment:
-        return Response({'status': 'none'})
-    data = {
-        'status': payment.status,
-        'submitted_at': payment.submitted_at,
-        'admin_note': payment.admin_note,
-    }
-    try:
-        data['package_name'] = payment.package_name
-        data['amount'] = float(payment.amount)
-    except Exception:
-        pass
-    return Response(data)
+    return Response(approval_meta(payment))
 
 
 # â”€â”€ Admin: manage payment account & package payments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -687,102 +736,27 @@ def list_package_payments(request):
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def approve_package_payment(request, payment_id):
-    from decimal import Decimal
-    try:
-        payment = PackagePayment.objects.get(id=payment_id)
-        payment.status = 'approved'
-        payment.admin_note = request.data.get('note', 'Approved')
-        payment.processed_at = timezone.now()
-        payment.save()
-
-        # 25% referral commission on package price (Level 1 â€” Direct Refer)
-        user = payment.user
-        if user.referred_by:
-            # 25% of package amount (stored in Rs e.g. 4500)
-            # wallet stores in decimal units (e.g. 45.00 = Rs 4500)
-            commission = Decimal(str(payment.amount)) * Decimal('0.25') / Decimal('100')
-            from wallet.models import Wallet, Transaction
-            from referrals.models import ReferralEarning
-            ref_wallet, _ = Wallet.objects.get_or_create(user=user.referred_by)
-            ref_wallet.main_balance += commission
-            ref_wallet.total_earned += commission
-            ref_wallet.save()
-            Transaction.objects.create(
-                user=user.referred_by,
-                transaction_type='referral',
-                amount=commission,
-                description=f'25% package commission from {user.username} (Rs {payment.amount})'
-            )
-            ReferralEarning.objects.create(
-                referrer=user.referred_by,
-                referred_user=user,
-                amount=commission,
-                earning_type='package_commission'
-            )
-
-            # Level 2 â€” 3% to referrer's referrer on package
-            if user.referred_by.referred_by:
-                commission_l2 = Decimal(str(payment.amount)) * Decimal('0.03') / Decimal('100')
-                referrer_l2 = user.referred_by.referred_by
-                ref_wallet_l2, _ = Wallet.objects.get_or_create(user=referrer_l2)
-                ref_wallet_l2.main_balance += commission_l2
-                ref_wallet_l2.total_earned += commission_l2
-                ref_wallet_l2.save()
-                Transaction.objects.create(
-                    user=referrer_l2,
-                    transaction_type='referral',
-                    amount=commission_l2,
-                    description=f'3% L2 package commission from {user.username} (Rs {payment.amount})'
-                )
-                ReferralEarning.objects.create(
-                    referrer=referrer_l2,
-                    referred_user=user,
-                    amount=commission_l2,
-                    earning_type='package_commission_l2'
-                )
-
-                # Level 3 â€” 1% to referrer's referrer's referrer on package
-                if referrer_l2.referred_by:
-                    commission_l3 = Decimal(str(payment.amount)) * Decimal('0.01') / Decimal('100')
-                    referrer_l3 = referrer_l2.referred_by
-                    ref_wallet_l3, _ = Wallet.objects.get_or_create(user=referrer_l3)
-                    ref_wallet_l3.main_balance += commission_l3
-                    ref_wallet_l3.total_earned += commission_l3
-                    ref_wallet_l3.save()
-                    Transaction.objects.create(
-                        user=referrer_l3,
-                        transaction_type='referral',
-                        amount=commission_l3,
-                        description=f'1% L3 package commission from {user.username} (Rs {payment.amount})'
-                    )
-                    ReferralEarning.objects.create(
-                        referrer=referrer_l3,
-                        referred_user=user,
-                        amount=commission_l3,
-                        earning_type='package_commission_l3'
-                    )
-
-        # Update referrer's level after package approval
-        if user.referred_by:
-            user.referred_by.update_level()
-
-        return Response({'message': 'Package approved'})
-    except PackagePayment.DoesNotExist:
+    from referrals.services import approve_package
+    result = approve_package(payment_id, request.data.get('note', 'Approved'))
+    if result == 'missing':
         return Response({'error': 'Not found'}, status=404)
+    if result == 'already':
+        return Response({'error': 'Package already approved'}, status=400)
+    return Response({'message': 'Package approved'})
 
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 def reject_package_payment(request, payment_id):
-    try:
-        payment = PackagePayment.objects.get(id=payment_id)
-        payment.status = 'rejected'
-        payment.admin_note = request.data.get('reason', 'Rejected')
-        payment.processed_at = timezone.now()
-        payment.save()
-        return Response({'message': 'Package rejected'})
-    except PackagePayment.DoesNotExist:
+    from referrals.services import reject_package
+    result = reject_package(payment_id, request.data.get('reason', 'Rejected'))
+    if result == 'missing':
         return Response({'error': 'Not found'}, status=404)
+    if result == 'locked':
+        return Response({'error': 'Approved plans cannot be rejected. Commission was already paid.'}, status=400)
+    if result == 'already':
+        return Response({'error': 'Package already rejected'}, status=400)
+    return Response({'message': 'Package rejected'})
 
 
 @api_view(['GET'])
@@ -1066,23 +1040,34 @@ def all_approved_users(request):
 def new_user_requests(request):
     """Users who submitted package payment but not yet approved"""
     today = date.today()
-    pending = PackagePayment.objects.filter(
-        status='pending'
-    ).select_related('user').order_by('-submitted_at')[:50]
-
-    data = [{
-        'id': p.id,
-        'username': p.user.username,
-        'email': p.user.email,
-        'package_name': p.package_name,
-        'amount': float(p.amount),
-        'screenshot': p.screenshot,
-        'submitted_at': p.submitted_at,
-    } for p in pending]
+    from referrals.services import approval_meta
+    pending = list(
+        PackagePayment.objects.filter(status='pending')
+        .select_related('user')
+        .order_by('submitted_at')[:100]
+    )
+    data = []
+    for payment in pending:
+        meta = approval_meta(payment)
+        data.append({
+            'id': payment.id,
+            'username': payment.user.username,
+            'email': payment.user.email,
+            'package_name': payment.package_name,
+            'amount': float(payment.amount),
+            'screenshot': payment.screenshot,
+            'submitted_at': payment.submitted_at,
+            'deadline': meta['deadline'],
+            'seconds_remaining': meta['seconds_remaining'],
+            'is_overdue': meta['is_overdue'],
+            'approval_hours': meta['approval_hours'],
+        })
+    data.sort(key=lambda row: (not row['is_overdue'], row['submitted_at']))
 
     return Response({
         'requests': data,
         'total': len(data),
+        'overdue': sum(1 for row in data if row['is_overdue']),
         'today': PackagePayment.objects.filter(status='pending', submitted_at__date=today).count(),
     })
 
@@ -1154,24 +1139,34 @@ def rejected_users(request):
 @permission_classes([IsAdminUser])
 def referral_commission_settings(request):
     """Get/update referral commission rates"""
+    from decimal import Decimal
     settings, _ = SiteSettings.objects.get_or_create(id=1)
+    rate_fields = {
+        'l1_package': 'l1_package_rate',
+        'l2_package': 'l2_package_rate',
+        'l3_package': 'l3_package_rate',
+        'l1_task': 'l1_task_rate',
+        'l2_task': 'l2_task_rate',
+        'l3_task': 'l3_task_rate',
+    }
     if request.method == 'GET':
         return Response({
-            'l1_package': 25,   # hardcoded in code but shown here
-            'l2_package': 3,
-            'l3_package': 1,
-            'l1_task': 1,
-            'l2_task': 3,
-            'l3_task': 1,
+            'l1_package': float(settings.l1_package_rate),
+            'l2_package': float(settings.l2_package_rate),
+            'l3_package': float(settings.l3_package_rate),
+            'l1_task': float(settings.l1_task_rate),
+            'l2_task': float(settings.l2_task_rate),
+            'l3_task': float(settings.l3_task_rate),
             'signup_bonus': float(settings.signup_bonus),
             'referral_enabled': settings.referral_enabled,
         })
-    # POST â€” update signup bonus & referral_enabled
     if 'signup_bonus' in request.data:
-        from decimal import Decimal
         settings.signup_bonus = Decimal(str(request.data['signup_bonus']))
     if 'referral_enabled' in request.data:
         settings.referral_enabled = bool(request.data['referral_enabled'])
+    for form_key, field_name in rate_fields.items():
+        if form_key in request.data and request.data[form_key] not in (None, ''):
+            setattr(settings, field_name, Decimal(str(request.data[form_key])))
     settings.save()
     return Response({'message': 'Referral settings updated'})
 
@@ -1180,13 +1175,28 @@ def referral_commission_settings(request):
 @permission_classes([IsAdminUser])
 def level_settings(request):
     """Get/update level reward settings"""
-    from tasks.views import LEVEL_REWARDS, TASK_LIMITS
+    from tasks.views import TASK_LIMITS
+    from referrals.services import get_site_settings, level_requirements, level_rewards, level_bonuses
+    settings = get_site_settings()
     if request.method == 'GET':
+        rewards = level_rewards(settings)
         return Response({
-            'level_rewards': {str(k): float(v) for k, v in LEVEL_REWARDS.items()},
+            'level_rewards': {str(k): float(v) for k, v in rewards.items()},
+            'level_requirements': level_requirements(settings),
+            'level_bonuses': [float(v) for v in level_bonuses(settings)],
             'task_limits': TASK_LIMITS,
         })
-    return Response({'message': 'Level settings are configured in code. Contact developer to update.'})
+    requirements = request.data.get('level_requirements')
+    if isinstance(requirements, list) and len(requirements) == 10:
+        settings.level_requirements = [int(value) for value in requirements]
+    bonuses = request.data.get('level_bonuses')
+    if isinstance(bonuses, list) and len(bonuses) == 10:
+        settings.level_bonuses = [str(value) for value in bonuses]
+    rewards = request.data.get('level_rewards')
+    if isinstance(rewards, dict):
+        settings.level_rewards = {str(key): str(value) for key, value in rewards.items()}
+    settings.save()
+    return Response({'message': 'Level settings updated'})
 
 
 @api_view(['GET', 'POST'])

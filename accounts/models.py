@@ -25,6 +25,7 @@ class User(AbstractUser):
     last_activity = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
     profile_picture = models.TextField(blank=True, default='')
+    level_bonus_paid = models.IntegerField(default=0)
     
     def save(self, *args, **kwargs):
         if not self.referral_code:
@@ -32,34 +33,37 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
     
     def update_level(self):
-        """Level based on approved team members (paid packages only)"""
-        from administration.models import PackagePayment
-        total_referrals = PackagePayment.objects.filter(
-            user__referred_by=self,
-            status='approved'
-        ).values('user').distinct().count()
-
-        if total_referrals >= 800:
-            self.level = 9
-        elif total_referrals >= 450:
-            self.level = 8
-        elif total_referrals >= 300:
-            self.level = 7
-        elif total_referrals >= 120:
-            self.level = 6
-        elif total_referrals >= 100:
-            self.level = 5
-        elif total_referrals >= 50:
-            self.level = 4
-        elif total_referrals >= 35:
-            self.level = 3
-        elif total_referrals >= 20:
-            self.level = 2
-        elif total_referrals >= 7:
-            self.level = 1
-        else:
-            self.level = 0
-        self.save(update_fields=['level'])
+        """Recalculate level from approved direct members and pay any new level bonus."""
+        from referrals.services import refresh_user_level
+        updated = refresh_user_level(self)
+        self.level = updated.level
+        self.level_bonus_paid = updated.level_bonus_paid
     
     def __str__(self):
         return self.username
+
+
+class Notification(models.Model):
+    CATEGORIES = [
+        ('registration', 'Registration'),
+        ('approval', 'Approval'),
+        ('plan', 'Plan'),
+        ('bonus', 'Bonus'),
+        ('commission', 'Commission'),
+        ('withdrawal', 'Withdrawal'),
+        ('level', 'Level'),
+        ('system', 'System'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    category = models.CharField(max_length=30, choices=CATEGORIES, default='system')
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.user_id} - {self.title}'

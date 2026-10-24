@@ -7,15 +7,32 @@ User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     has_package = serializers.SerializerMethodField()
+    referred_by_code = serializers.SerializerMethodField()
+    unread_notifications = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'phone', 'is_email_verified', 'referral_code', 'level', 'points', 'is_staff', 'created_at', 'has_package', 'profile_picture']
-        read_only_fields = ['id', 'referral_code', 'level', 'points', 'is_staff', 'created_at', 'has_package']
+        fields = [
+            'id', 'username', 'email', 'phone', 'is_email_verified', 'referral_code',
+            'level', 'points', 'is_staff', 'created_at', 'has_package', 'profile_picture',
+            'referred_by_code', 'unread_notifications', 'is_blocked', 'block_reason',
+        ]
+        read_only_fields = [
+            'id', 'referral_code', 'level', 'points', 'is_staff', 'created_at',
+            'has_package', 'referred_by_code', 'unread_notifications', 'is_blocked', 'block_reason',
+        ]
 
     def get_has_package(self, obj):
         from administration.models import PackagePayment
         return PackagePayment.objects.filter(user=obj, status='approved').exists()
+
+    def get_referred_by_code(self, obj):
+        if not obj.referred_by_id:
+            return ''
+        return obj.referred_by.referral_code
+
+    def get_unread_notifications(self, obj):
+        return obj.notifications.filter(is_read=False).count()
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -53,22 +70,40 @@ class RegisterSerializer(serializers.ModelSerializer):
                     'invalid': 'Please enter a valid email address',
                     'unique': 'This email is already registered. Please use a different email or login.'
                 }
-            }
+            },
+            'phone': {
+                'required': True,
+                'allow_blank': False,
+                'error_messages': {
+                    'required': 'Phone number is required',
+                    'blank': 'Phone number is required',
+                }
+            },
         }
     
     def validate_username(self, value):
-        if len(value) < 3:
-            raise serializers.ValidationError("Username must be at least 3 characters long")
-        if len(value) > 30:
-            raise serializers.ValidationError("Username cannot be longer than 30 characters")
-        if not value.replace('_', '').replace('-', '').isalnum():
-            raise serializers.ValidationError("Username can only contain letters, numbers, underscores and hyphens")
-        return value
+        if len(value.strip()) < 3:
+            raise serializers.ValidationError("Name must be at least 3 characters long")
+        if len(value.strip()) > 60:
+            raise serializers.ValidationError("Name cannot be longer than 60 characters")
+        cleaned = value.strip()
+        if not cleaned.replace(' ', '').replace('_', '').replace('-', '').isalnum():
+            raise serializers.ValidationError("Name can only contain letters, numbers, spaces, underscores and hyphens")
+        return cleaned
     
+    def validate_phone(self, value):
+        digits = ''.join(ch for ch in (value or '') if ch.isdigit())
+        if len(digits) < 10:
+            raise serializers.ValidationError('Enter a valid phone number with at least 10 digits')
+        return value.strip()
+
     def validate_referral_code(self, value):
-        if value and not User.objects.filter(referral_code=value).exists():
+        if not value:
+            return value
+        code = value.strip().upper()
+        if not User.objects.filter(referral_code=code).exists():
             raise serializers.ValidationError("Invalid referral code")
-        return value
+        return code
     
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
@@ -83,12 +118,15 @@ class RegisterSerializer(serializers.ModelSerializer):
             user = User.objects.create_user(**validated_data)
             
             if referral_code:
-                try:
-                    referrer = User.objects.get(referral_code=referral_code)
-                    user.referred_by = referrer
-                    user.save()
-                except User.DoesNotExist:
-                    pass
+                from referrals.services import get_site_settings
+                if get_site_settings().referral_enabled:
+                    try:
+                        referrer = User.objects.get(referral_code=referral_code)
+                        if referrer.pk != user.pk:
+                            user.referred_by = referrer
+                            user.save(update_fields=['referred_by'])
+                    except User.DoesNotExist:
+                        pass
             
             return user
         except Exception as e:

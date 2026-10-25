@@ -21,7 +21,7 @@ class SiteSettings(models.Model):
     maintenance_mode = models.BooleanField(default=False)
     referral_enabled = models.BooleanField(default=True)
     currency = models.CharField(max_length=3, default='USD')
-    site_name = models.CharField(max_length=100, default='YTEarn')
+    site_name = models.CharField(max_length=100, default='INSTOVA')
     whatsapp_channel_link = models.URLField(
         max_length=500,
         blank=True,
@@ -71,6 +71,7 @@ class SiteSettings(models.Model):
         blank=True,
         default='Pay only the remaining amount. Your previous verified payment stays saved and is not charged again. The package changes only after admin approval. One transaction ID can be approved only once.',
     )
+    terms_sections = models.JSONField(default=empty_list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
@@ -225,3 +226,31 @@ class Analytics(models.Model):
     
     def __str__(self):
         return str(self.date)
+
+
+class Complaint(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='complaints')
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.user_id} complaint'
+
+
+class AdminActivity(models.Model):
+    admin = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='admin_activities',
+    )
+    action = models.CharField(max_length=80)
+    detail = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.action

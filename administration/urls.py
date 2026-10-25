@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import portal, views
 
 urlpatterns = [
     path('dashboard-stats/', views.admin_dashboard_stats, name='admin_dashboard_stats'),
@@ -52,6 +52,10 @@ urlpatterns = [
     path('payment-accounts/', views.payment_accounts_all, name='payment_accounts_all'),
     path('payment-accounts/<int:account_id>/delete/', views.delete_payment_account, name='delete_payment_account'),
 
+    path('terms/', portal.admin_terms, name='admin_terms'),
+    path('complaints/', portal.admin_complaints, name='admin_complaints'),
+    path('history/', portal.admin_history, name='admin_history'),
+    path('activity/', portal.admin_activity, name='admin_activity'),
     path('upgrade-requests/', views.list_upgrade_requests, name='list_upgrade_requests'),
     path('approve-upgrade/<int:upgrade_id>/', views.approve_upgrade_request, name='approve_upgrade_request'),
     path('reject-upgrade/<int:upgrade_id>/', views.reject_upgrade_request, name='reject_upgrade_request'),

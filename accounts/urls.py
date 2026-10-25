@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from administration import portal
 from administration import views as admin_views
 
 urlpatterns = [
@@ -29,4 +30,6 @@ urlpatterns = [
     path('upgrade-options/', admin_views.upgrade_options, name='upgrade_options'),
     path('upgrade-request/', admin_views.submit_upgrade_request, name='submit_upgrade_request'),
     path('upgrade-requests/', admin_views.my_upgrade_requests, name='my_upgrade_requests'),
+    path('terms/', portal.user_terms, name='user_terms'),
+    path('complaints/', portal.user_complaints, name='user_complaints'),
 ]

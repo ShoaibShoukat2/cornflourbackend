@@ -25,6 +25,12 @@ def admin_dashboard_stats(request):
         blocked=Count('id', filter=Q(is_active=False)),
     )
     approved_users = User.objects.filter(package_payments__status='approved').distinct().count()
+    pending_accounts = PackagePayment.objects.filter(status='pending').values('user').distinct().count()
+    rejected_accounts = User.objects.filter(
+        package_payments__status='rejected',
+    ).exclude(package_payments__status='approved').distinct().count()
+    inactive_members = User.objects.filter(Q(is_active=False) | Q(is_blocked=True)).distinct().count()
+    team_members = User.objects.filter(is_staff=False).count()
 
     packages = PackagePayment.objects.aggregate(
         total_deposited=Sum('amount', filter=Q(status='approved')),
@@ -90,6 +96,10 @@ def admin_dashboard_stats(request):
             'new_today': new_users_today,
             'blocked': blocked_users,
             'approved': approved_users,
+            'pending': pending_accounts,
+            'rejected': rejected_accounts,
+            'inactive': inactive_members,
+            'team': team_members,
             'today_approved': today_approved,
             'today_deposited': today_deposited,
         },
@@ -364,6 +374,8 @@ def update_site_settings(request):
         settings.package_prices = request.data['package_prices']
 
     settings.save()
+    from administration.portal import record_activity
+    record_activity(request.user, 'settings_update', ', '.join(str(key) for key in request.data.keys())[:500])
     return Response({'message': 'Settings updated successfully'})
 
 
@@ -394,22 +406,33 @@ def create_announcement(request):
 @permission_classes([IsAdminUser])
 def get_all_users(request):
     search = request.GET.get('search', '').strip()
+    status_filter = request.GET.get('status', '').strip()
     page = int(request.GET.get('page', 1))
     page_size = 20
 
+    qs = User.objects.all().order_by('-created_at')
     if search:
-        qs = User.objects.filter(
+        qs = qs.filter(
             Q(email__icontains=search) |
-            Q(username__icontains=search)
-        ).order_by('-created_at')
-    else:
-        qs = User.objects.all().order_by('-created_at')
+            Q(username__icontains=search) |
+            Q(referral_code__icontains=search)
+        )
+    if status_filter == 'active':
+        qs = qs.filter(is_active=True, is_blocked=False)
+    elif status_filter == 'inactive':
+        qs = qs.filter(Q(is_active=False) | Q(is_blocked=True))
+    elif status_filter == 'approved':
+        qs = qs.filter(package_payments__status='approved').distinct()
+    elif status_filter == 'pending':
+        qs = qs.filter(package_payments__status='pending').distinct()
+    elif status_filter == 'rejected':
+        qs = qs.filter(package_payments__status='rejected').exclude(package_payments__status='approved').distinct()
 
     total = qs.count()
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = max(1, min(page, total_pages))
     start = (page - 1) * page_size
-    users = qs.select_related('wallet')[start:start + page_size]
+    users = qs.select_related('wallet', 'referred_by')[start:start + page_size]
 
     user_data = []
     for user in users:
@@ -417,6 +440,16 @@ def get_all_users(request):
             balance = user.wallet.main_balance
         except Wallet.DoesNotExist:
             balance = 0
+        if user.is_blocked or not user.is_active:
+            account_status = 'inactive'
+        elif user.package_payments.filter(status='approved').exists():
+            account_status = 'approved'
+        elif user.package_payments.filter(status='pending').exists():
+            account_status = 'pending'
+        elif user.package_payments.filter(status='rejected').exists():
+            account_status = 'rejected'
+        else:
+            account_status = 'registered'
         user_data.append({
             'id': user.id,
             'username': user.username,
@@ -427,6 +460,10 @@ def get_all_users(request):
             'is_active': user.is_active,
             'is_blocked': user.is_blocked,
             'created_at': user.created_at,
+            'referral_code': user.referral_code,
+            'sponsor': user.referred_by.username if user.referred_by else '',
+            'direct_team': user.referrals.count(),
+            'account_status': account_status,
         })
 
     return Response({

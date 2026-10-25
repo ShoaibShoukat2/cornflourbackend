@@ -33,6 +33,12 @@ def referral_stats(request):
         'levels_total': progress['levels_total'],
         'unlocked_levels': progress['unlocked_levels'],
         'level_requirements': progress['requirements'],
+        'referred_total': summary['direct_registered'] + summary['indirect_registered'],
+        'active_members': summary['direct'] + summary['indirect'],
+        'pending_members': (
+            summary['direct_registered'] + summary['indirect_registered']
+            - summary['direct'] - summary['indirect']
+        ),
         **get_weekly_joining_status(user),
     }
 

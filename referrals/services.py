@@ -357,7 +357,7 @@ def team_member_rows(user, limit=200):
 
     summary = team_summary(user)
     depth_map = {member_id: depth for member_id, depth in summary['downline']}
-    ids = [member_id for member_id in depth_map if member_id in summary['approved_ids']][:limit]
+    ids = list(depth_map.keys())[:limit]
     if not ids:
         return []
 
@@ -398,6 +398,7 @@ def team_member_rows(user, limit=200):
             'approved_at': payment.processed_at if payment else None,
             'relation': 'direct' if depth == 1 else 'indirect',
             'depth': depth,
+            'status': 'active' if member.id in summary['approved_ids'] else 'pending',
         })
     rows.sort(key=lambda row: (row['depth'], row['username'].lower()))
     return rows

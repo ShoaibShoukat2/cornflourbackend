@@ -50,3 +50,6 @@ class ReferralStatsSerializer(serializers.Serializer):
     levels_total = serializers.IntegerField(required=False)
     unlocked_levels = serializers.ListField(child=serializers.IntegerField(), required=False)
     level_requirements = serializers.ListField(child=serializers.IntegerField(), required=False)
+    referred_total = serializers.IntegerField(required=False)
+    active_members = serializers.IntegerField(required=False)
+    pending_members = serializers.IntegerField(required=False)

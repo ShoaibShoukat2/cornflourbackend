@@ -405,9 +405,24 @@ def team_member_rows(user, limit=200):
 
 
 def referral_link_for(user, settings=None):
+    from urllib.parse import urlparse
+
     settings = settings or get_site_settings()
-    base = (settings.frontend_url or 'https://instovaearn.com').rstrip('/')
-    return f'{base}/register?ref={user.referral_code}'
+    raw = (settings.frontend_url or '').strip()
+    if raw and '://' not in raw:
+        raw = f'https://{raw}'
+    host = (urlparse(raw).hostname or '').lower()
+    stale = (
+        not host
+        or host in {'localhost', '127.0.0.1', 'instovaearn.com'}
+        or 'vercel.app' in host
+        or 'cornflower' in host
+        or 'cornflour' in host
+        or 'pythonanywhere' in host
+    )
+    if stale:
+        host = 'www.instovaearn.com'
+    return f'https://{host}/register?ref={user.referral_code}'
 
 
 def approval_meta(payment, settings=None):

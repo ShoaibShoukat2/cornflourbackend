@@ -18,41 +18,47 @@ User = get_user_model()
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register(request):
+    from django.db import transaction as db_transaction
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
-        user = serializer.save()
-        Wallet.objects.get_or_create(user=user)
-        settings = get_site_settings()
-        bonus = Decimal(str(settings.signup_bonus or 0))
+        try:
+            with db_transaction.atomic():
+                user = serializer.save()
+                Wallet.objects.get_or_create(user=user)
+                settings = get_site_settings()
+                bonus = Decimal(str(settings.signup_bonus or 0))
 
-        if not user.signup_bonus_claimed and bonus > 0:
-            credit_user(
-                user,
-                bonus,
-                'bonus',
-                f'Signup bonus - Rs {int(bonus * 100)}',
-            )
-            user.signup_bonus_claimed = True
-            user.save(update_fields=['signup_bonus_claimed'])
+                if not user.signup_bonus_claimed and bonus > 0:
+                    credit_user(
+                        user,
+                        bonus,
+                        'bonus',
+                        f'Signup bonus - Rs {int(bonus * 100)}',
+                    )
+                    user.signup_bonus_claimed = True
+                    user.save(update_fields=['signup_bonus_claimed'])
 
-        if user.referred_by_id and not ReferralEarning.objects.filter(
-            referrer=user.referred_by, referred_user=user, earning_type='signup'
-        ).exists():
-            ReferralEarning.objects.create(
-                referrer=user.referred_by,
-                referred_user=user,
-                amount=0,
-                earning_type='signup',
-            )
+                if user.referred_by_id and not ReferralEarning.objects.filter(
+                    referrer=user.referred_by, referred_user=user, earning_type='signup'
+                ).exists():
+                    ReferralEarning.objects.create(
+                        referrer=user.referred_by,
+                        referred_user=user,
+                        amount=0,
+                        earning_type='signup',
+                    )
 
-        notify(
-            user,
-            'Account created',
-            'Your account is created. Choose a plan next. It is reviewed within the approval time after payment.',
-            'registration',
-        )
+                notify(
+                    user,
+                    'Account created',
+                    'Your account is created. Choose a plan next. It is reviewed within the approval time after payment.',
+                    'registration',
+                )
 
-        token = Token.objects.create(user=user)
+                token = Token.objects.create(user=user)
+        except Exception as e:
+            return Response({'error': 'Registration failed. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
         return Response({
             'token': token.key,
             'user': UserSerializer(user).data

@@ -1402,12 +1402,22 @@ UPGRADE_ERRORS = {
 @permission_classes([IsAuthenticated])
 def upgrade_options(request):
     from administration.upgrades import upgrade_quote
-    return Response(upgrade_quote(request.user))
+    data = upgrade_quote(request.user)
+    # Level 3 restriction: lock upgrades once user reaches level 3
+    user_level = int(request.user.level or 0)
+    data['level3_locked'] = user_level >= 3
+    data['user_level'] = user_level
+    return Response(data)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def submit_upgrade_request(request):
+    # Level 3 restriction: users at level 3 or above cannot upgrade
+    user_level = int(request.user.level or 0)
+    if user_level >= 3:
+        return Response({'error': 'Plan upgrade is not allowed after reaching Level 3.'}, status=400)
+
     from administration.upgrades import _request_payload, submit_upgrade
     code, upgrade = submit_upgrade(
         request.user,

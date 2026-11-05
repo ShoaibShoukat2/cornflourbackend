@@ -91,6 +91,18 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Name can only contain letters, numbers, spaces, underscores and hyphens")
         return cleaned
     
+    def validate_email(self, value):
+        import re
+        if not value or not value.strip():
+            raise serializers.ValidationError('Email is required')
+        email = value.strip().lower()
+        pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, email):
+            raise serializers.ValidationError('Please enter a valid email address (e.g. name@gmail.com)')
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError('This email is already registered. Please login instead.')
+        return email
+
     def validate_phone(self, value):
         digits = ''.join(ch for ch in (value or '') if ch.isdigit())
         if len(digits) < 10:

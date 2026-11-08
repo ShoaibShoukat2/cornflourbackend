@@ -73,6 +73,7 @@ def _request_payload(upgrade, include_proof=False):
         'id': upgrade.id,
         'user_id': upgrade.user_id,
         'username': upgrade.user.username,
+        'email': upgrade.user.email,
         'from_package': upgrade.from_package,
         'from_label': PLAN_NAMES.get(upgrade.from_package, upgrade.from_package),
         'to_package': upgrade.to_package,

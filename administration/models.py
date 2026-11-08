@@ -37,6 +37,20 @@ class SiteSettings(models.Model):
     bank_transfer_enabled = models.BooleanField(default=True)
     approval_hours = models.PositiveIntegerField(default=5)
     support_phone = models.CharField(max_length=30, blank=True, default='')
+    contact_admin_name = models.CharField(max_length=150, blank=True, default='')
+    contact_admin_purpose = models.CharField(max_length=250, blank=True, default='')
+    contact_instructions = models.TextField(blank=True, default='')
+    whatsapp_contact_number = models.CharField(max_length=30, blank=True, default='')
+    botim_contact_number = models.CharField(max_length=30, blank=True, default='')
+    botim_contact_link = models.URLField(max_length=500, blank=True, default='')
+    whatsapp_icon = models.TextField(blank=True, default='')
+    botim_icon = models.TextField(blank=True, default='')
+    whatsapp_channel_name = models.CharField(max_length=100, blank=True, default='Official WhatsApp Channel')
+    whatsapp_channel_purpose = models.CharField(max_length=250, blank=True, default='Official announcements and updates.')
+    whatsapp_channel_icon = models.TextField(blank=True, default='')
+    whatsapp_community_name = models.CharField(max_length=100, blank=True, default='Official WhatsApp Community')
+    whatsapp_community_purpose = models.CharField(max_length=250, blank=True, default='Community support and discussion.')
+    whatsapp_community_icon = models.TextField(blank=True, default='')
     frontend_url = models.CharField(max_length=300, blank=True, default='https://instovaearn.com')
     minimum_withdrawal_first = models.DecimalField(max_digits=10, decimal_places=2, default=0.50)
     l1_package_rate = models.DecimalField(max_digits=5, decimal_places=2, default=25)
@@ -110,6 +124,8 @@ class PackagePayment(models.Model):
     package_name = models.CharField(max_length=20, choices=PACKAGE_CHOICES, default='normal')
     screenshot = models.TextField()  # base64 or URL
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=800)
+    sender_name = models.CharField(max_length=150, blank=True)
+    sender_number = models.CharField(max_length=30, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     commission_paid = models.BooleanField(default=False)
     admin_note = models.TextField(blank=True)
@@ -121,6 +137,17 @@ class PackagePayment(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.status}"
+
+
+class PackagePaymentEditHistory(models.Model):
+    payment = models.ForeignKey(PackagePayment, on_delete=models.CASCADE, related_name='edit_history')
+    admin = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    old_values = models.JSONField(default=dict)
+    new_values = models.JSONField(default=dict)
+    edited_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-edited_at']
 
 
 class PackageUpgrade(models.Model):

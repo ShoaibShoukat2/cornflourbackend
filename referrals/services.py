@@ -386,6 +386,7 @@ def team_member_rows(user, limit=200):
         rows.append({
             'id': member.id,
             'username': member.username,
+            'email': member.email,
             'created_at': member.created_at,
             'level': member.level,
             'total_earned': total_earned,

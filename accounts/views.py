@@ -101,6 +101,9 @@ def logout(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def profile(request):
+    from referrals.services import level_progress
+    level_progress(request.user)
+    request.user.refresh_from_db(fields=['level', 'level_bonus_paid'])
     return Response(UserSerializer(request.user).data)
 
 @api_view(['POST'])

@@ -10,9 +10,11 @@ class TaskSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'description', 'task_type', 'reward', 'time_required', 'url', 'is_active', 'is_completed']
     
     def get_is_completed(self, obj):
+        done_ids = self.context.get('done_ids')
+        if done_ids is not None:
+            return obj.id in done_ids
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            # Only mark completed for TODAY — resets daily
             return UserTask.objects.filter(
                 user=request.user, task=obj,
                 status='verified', date=date.today()

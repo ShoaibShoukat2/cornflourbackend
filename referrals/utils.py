@@ -27,10 +27,15 @@ def get_user_package_approved_at(user):
 
 
 def is_in_new_user_grace_period(user):
+    """New members can open tasks for 7 days after joining or after plan approval."""
+    now = timezone.now()
+    joined = getattr(user, 'created_at', None)
+    if joined and now < joined + timedelta(days=NEW_USER_GRACE_DAYS):
+        return True
     approved_at = get_user_package_approved_at(user)
     if not approved_at:
         return False
-    return timezone.now() < approved_at + timedelta(days=NEW_USER_GRACE_DAYS)
+    return now < approved_at + timedelta(days=NEW_USER_GRACE_DAYS)
 
 
 def get_current_week_bounds():

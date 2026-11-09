@@ -37,15 +37,26 @@ def user_has_package(user):
 
 def get_user_package(user):
     """Active package, including an approved upgrade."""
-    from administration.upgrades import current_package_name
-    return current_package_name(user)
+    from administration.models import PackagePayment
+    try:
+        from administration.upgrades import current_package_name
+        name = current_package_name(user)
+        if name:
+            return name
+    except Exception:
+        pass
+    payment = (
+        PackagePayment.objects.filter(user=user, status='approved')
+        .order_by('-id')
+        .only('package_name')
+        .first()
+    )
+    return payment.package_name if payment else None
 
 
 def get_daily_task_limit(user):
-    pkg_name = get_user_package(user)
-    if not pkg_name:
-        return 0
-    level = min(user.level, 9)
+    pkg_name = get_user_package(user) or 'normal'
+    level = min(int(user.level or 0), 9)
     limits = TASK_LIMITS.get(pkg_name, TASK_LIMITS['normal'])
     return limits[level]
 
@@ -67,8 +78,12 @@ def task_list(request):
         completed_at__date=today
     ).count()
 
-    tasks = Task.objects.filter(is_active=True)
-    serializer = TaskSerializer(tasks, many=True, context={'request': request})
+    tasks = Task.objects.filter(is_active=True).order_by('id')
+    done_ids = set(
+        UserTask.objects.filter(user=request.user, status='verified', date=today)
+        .values_list('task_id', flat=True)
+    )
+    serializer = TaskSerializer(tasks, many=True, context={'request': request, 'done_ids': done_ids})
     data = serializer.data
 
     return Response({

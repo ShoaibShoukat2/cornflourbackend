@@ -5,9 +5,10 @@ from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Withdrawal, Transaction
 from tasks.models import Task, UserTask
 from .models import Analytics, FraudDetection, IPTracking, SiteSettings, Announcement, PaymentAccount, PackagePayment
-from django.db.models import Sum, Count, Q, Prefetch
+from django.db.models import Sum, Count, Q, Prefetch, Exists, OuterRef
 from django.db.models.functions import TruncDate
 from datetime import date, timedelta
+from django.core.cache import cache
 from django.utils import timezone
 
 User = get_user_model()
@@ -15,6 +16,9 @@ User = get_user_model()
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def admin_dashboard_stats(request):
+    cached = cache.get('admin_dash_stats_v2')
+    if cached is not None:
+        return Response(cached)
     today = date.today()
     from referrals.models import ReferralEarning
 
@@ -89,7 +93,7 @@ def admin_dashboard_stats(request):
     critical_frauds = fraud['critical'] or 0
     revenue = float(total_earnings) - float(total_withdrawals)
 
-    return Response({
+    payload = {
         'users': {
             'total': total_users,
             'active': active_users,
@@ -129,7 +133,9 @@ def admin_dashboard_stats(request):
             'fraud_alerts': fraud_alerts,
             'critical_frauds': critical_frauds,
         }
-    })
+    }
+    cache.set('admin_dash_stats_v2', payload, 45)
+    return Response(payload)
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
@@ -196,6 +202,10 @@ def admin_dashboard_charts(request):
     from referrals.models import ReferralEarning
 
     days = min(30, max(7, int(request.GET.get('days', 14))))
+    cache_key = f'admin_dash_charts_v2_{days}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
     end_date = date.today()
     start_date = end_date - timedelta(days=days - 1)
 
@@ -281,7 +291,7 @@ def admin_dashboard_charts(request):
     pending_packages = PackagePayment.objects.filter(status='pending').count()
     pending_withdrawals = Withdrawal.objects.filter(status='pending').count()
 
-    return Response({
+    response = Response({
         'days': days,
         'labels': labels,
         'series': {
@@ -312,6 +322,8 @@ def admin_dashboard_charts(request):
         },
         'updated_at': timezone.now().isoformat(),
     })
+    cache.set(cache_key, response.data, 60)
+    return response
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
@@ -432,7 +444,15 @@ def get_all_users(request):
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = max(1, min(page, total_pages))
     start = (page - 1) * page_size
-    users = qs.select_related('wallet', 'referred_by')[start:start + page_size]
+    approved_pay = PackagePayment.objects.filter(user_id=OuterRef('pk'), status='approved')
+    pending_pay = PackagePayment.objects.filter(user_id=OuterRef('pk'), status='pending')
+    rejected_pay = PackagePayment.objects.filter(user_id=OuterRef('pk'), status='rejected')
+    users = qs.select_related('wallet', 'referred_by').annotate(
+        direct_team=Count('referrals', distinct=True),
+        has_approved=Exists(approved_pay),
+        has_pending=Exists(pending_pay),
+        has_rejected=Exists(rejected_pay),
+    )[start:start + page_size]
 
     user_data = []
     for user in users:
@@ -442,11 +462,11 @@ def get_all_users(request):
             balance = 0
         if user.is_blocked or not user.is_active:
             account_status = 'inactive'
-        elif user.package_payments.filter(status='approved').exists():
+        elif user.has_approved:
             account_status = 'approved'
-        elif user.package_payments.filter(status='pending').exists():
+        elif user.has_pending:
             account_status = 'pending'
-        elif user.package_payments.filter(status='rejected').exists():
+        elif user.has_rejected:
             account_status = 'rejected'
         else:
             account_status = 'registered'
@@ -462,7 +482,7 @@ def get_all_users(request):
             'created_at': user.created_at,
             'referral_code': user.referral_code,
             'sponsor': user.referred_by.username if user.referred_by else '',
-            'direct_team': user.referrals.count(),
+            'direct_team': user.direct_team,
             'account_status': account_status,
         })
 
@@ -747,13 +767,10 @@ def pending_package_count(request):
 def list_package_payments(request):
     status_filter = request.GET.get('status', 'all')
     user_id = request.GET.get('user', None)
-    include_shot = status_filter == 'pending'
     fields = [
         'id', 'package_name', 'amount', 'status', 'admin_note', 'submitted_at',
         'user__username', 'user__email',
     ]
-    if include_shot:
-        fields.append('screenshot')
     qs = PackagePayment.objects.select_related('user').only(*fields)
     if status_filter != 'all':
         qs = qs.filter(status=status_filter)
@@ -768,13 +785,23 @@ def list_package_payments(request):
             'package_name': p.package_name,
             'amount': p.amount,
             'status': p.status,
-            'screenshot': p.screenshot if include_shot else None,
+            'has_proof': True,
             'admin_note': p.admin_note,
             'submitted_at': p.submitted_at,
         }
         for p in qs
     ]
     return Response(data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def package_payment_proof(request, payment_id):
+    try:
+        payment = PackagePayment.objects.only('id', 'screenshot').get(pk=payment_id)
+    except PackagePayment.DoesNotExist:
+        return Response({'error': 'Not found'}, status=404)
+    return Response({'screenshot': payment.screenshot})
 
 
 @api_view(['POST'])
@@ -1088,6 +1115,7 @@ def new_user_requests(request):
     pending = list(
         PackagePayment.objects.filter(status='pending')
         .select_related('user')
+        .defer('screenshot')
         .order_by('submitted_at')[:100]
     )
     data = []
@@ -1099,7 +1127,7 @@ def new_user_requests(request):
             'email': payment.user.email,
             'package_name': payment.package_name,
             'amount': float(payment.amount),
-            'screenshot': payment.screenshot,
+            'has_proof': True,
             'submitted_at': payment.submitted_at,
             'deadline': meta['deadline'],
             'seconds_remaining': meta['seconds_remaining'],
@@ -1315,7 +1343,7 @@ def get_user_full(request, user_id):
             'id', 'transaction_type', 'amount', 'description', 'created_at'
         ).order_by('-created_at')[:200])
 
-        pkg_payment = PackagePayment.objects.filter(user=user).order_by('-submitted_at').first()
+        pkg_payment = PackagePayment.objects.filter(user=user).defer('screenshot').order_by('-submitted_at').first()
 
         return Response({
             'detail': {
@@ -1375,7 +1403,7 @@ def get_user_full(request, user_id):
                 'status': pkg_payment.status,
                 'package_name': pkg_payment.package_name,
                 'amount': float(pkg_payment.amount),
-                'screenshot': pkg_payment.screenshot,
+                'has_proof': True,
                 'admin_note': pkg_payment.admin_note,
                 'submitted_at': pkg_payment.submitted_at,
                 'email': user.email,
@@ -1448,11 +1476,21 @@ def list_upgrade_requests(request):
     qs = PackageUpgrade.objects.select_related('user').order_by('-submitted_at')
     if status_filter != 'all':
         qs = qs.filter(status=status_filter)
-    include_proof = status_filter in ('pending', 'all')
     return Response({
-        'requests': [_request_payload(row, include_proof=include_proof) for row in qs[:100]],
+        'requests': [_request_payload(row, include_proof=False) for row in qs.defer('screenshot')[:100]],
         'pending': PackageUpgrade.objects.filter(status='pending').count(),
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def upgrade_payment_proof(request, upgrade_id):
+    from administration.models import PackageUpgrade
+    try:
+        upgrade = PackageUpgrade.objects.only('id', 'screenshot').get(pk=upgrade_id)
+    except PackageUpgrade.DoesNotExist:
+        return Response({'error': 'Not found'}, status=404)
+    return Response({'screenshot': upgrade.screenshot})
 
 
 @api_view(['POST'])

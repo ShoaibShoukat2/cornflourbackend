@@ -238,11 +238,14 @@ def refresh_user_level(user):
         settings = get_site_settings()
         requirements = level_requirements(settings)
         bonuses = level_bonuses(settings)
-        new_level = level_for_count(approved_direct_count(locked), requirements)
+        qualified = level_for_count(approved_direct_count(locked), requirements)
+        stored = int(locked.level or 0)
+        # A member already on level 2, 3, or 4 must stay there. Only move up.
+        new_level = max(stored, qualified)
         previous_paid = locked.level_bonus_paid or 0
         locked.level = new_level
-        if new_level > previous_paid:
-            for level in range(previous_paid + 1, new_level + 1):
+        if qualified > previous_paid:
+            for level in range(previous_paid + 1, qualified + 1):
                 bonus = bonuses[level]
                 if bonus > 0:
                     credit_user(
@@ -264,7 +267,7 @@ def refresh_user_level(user):
                         f'You unlocked level {level}.',
                         'level',
                     )
-            locked.level_bonus_paid = new_level
+            locked.level_bonus_paid = qualified
         locked.save(update_fields=['level', 'level_bonus_paid'])
         return locked
 
@@ -306,7 +309,13 @@ def commission_totals(user):
 def level_progress(user, direct_approved=None):
     requirements = level_requirements()
     have = approved_direct_count(user) if direct_approved is None else direct_approved
-    current = min(int(user.level or 0), 9)
+    qualified = level_for_count(have, requirements)
+    stored = min(int(user.level or 0), 9)
+    if qualified > stored:
+        refreshed = refresh_user_level(user)
+        stored = min(int(refreshed.level or 0), 9)
+        user.level = stored
+    current = max(stored, qualified)
     nxt = current + 1 if current < 9 else None
     needed = requirements[nxt] if nxt is not None else None
     return {
@@ -404,15 +413,16 @@ def team_member_rows(user, limit=200):
     return rows
 
 
-def referral_link_for(user, settings=None):
+def public_site_origin(settings=None):
+    """Member links must open the live site, never a removed or API host."""
     from urllib.parse import urlparse
 
     settings = settings or get_site_settings()
-    raw = (settings.frontend_url or '').strip()
+    raw = (getattr(settings, 'frontend_url', '') or '').strip()
     if raw and '://' not in raw:
         raw = f'https://{raw}'
     host = (urlparse(raw).hostname or '').lower()
-    stale = (
+    dead = (
         not host
         or host in {'localhost', '127.0.0.1', 'instovaearn.com'}
         or 'vercel.app' in host
@@ -420,9 +430,14 @@ def referral_link_for(user, settings=None):
         or 'cornflour' in host
         or 'pythonanywhere' in host
     )
-    if stale:
-        host = 'www.instovaearn.com'
-    return f'https://{host}/register?ref={user.referral_code}'
+    if dead:
+        return 'https://www.instovaearn.com'
+    return f'https://{host}'
+
+
+def referral_link_for(user, settings=None):
+    code = (user.referral_code or '').strip()
+    return f'{public_site_origin(settings)}/register?ref={code}'
 
 
 def approval_meta(payment, settings=None):

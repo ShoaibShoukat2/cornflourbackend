@@ -125,6 +125,30 @@ class SystemLogicTests(TestCase):
         self.assertEqual(referrer.level, 1)
         self.assertEqual(referrer.wallet.main_balance, Decimal('1.75') + Decimal('0.10'))
 
+    def test_existing_level_is_not_lowered_and_link_opens_live_site(self):
+        from referrals.services import level_progress, public_site_origin, refresh_user_level
+        leader = make_user('keeper@test.com', 'Keeper')
+        leader.level = 4
+        leader.level_bonus_paid = 4
+        leader.save(update_fields=['level', 'level_bonus_paid'])
+        refresh_user_level(leader)
+        leader.refresh_from_db()
+        self.assertEqual(leader.level, 4)
+        self.assertEqual(level_progress(leader)['current'], 4)
+        self.assertEqual(public_site_origin(), 'https://www.instovaearn.com')
+        opened = self.client.get('/register', {'ref': leader.referral_code})
+        self.assertEqual(opened.status_code, 302)
+        self.assertEqual(opened['Location'], f'https://www.instovaearn.com/register?ref={leader.referral_code}')
+
+    def test_new_member_task_room_stays_open_during_grace(self):
+        from referrals.utils import is_in_new_user_grace_period, weekly_joining_task_block
+        member = make_user('fresh@test.com', 'Fresh')
+        PackagePayment.objects.create(
+            user=member, package_name='normal', amount=700, screenshot='shot', status='approved', commission_paid=True
+        )
+        self.assertTrue(is_in_new_user_grace_period(member))
+        self.assertIsNone(weekly_joining_task_block(member))
+
     def test_withdrawal_locks_balance_and_reject_refunds(self):
         user = make_user('rich@test.com', 'Rich')
         wallet = user.wallet

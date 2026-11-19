@@ -5,11 +5,14 @@ from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Withdrawal, Transaction
 from tasks.models import Task, UserTask
 from .models import Analytics, FraudDetection, IPTracking, SiteSettings, Announcement, PaymentAccount, PackagePayment
+from django.db import transaction
 from django.db.models import Sum, Count, Q, Prefetch, Exists, OuterRef
 from django.db.models.functions import TruncDate
 from datetime import date, timedelta
 from django.core.cache import cache
 from django.utils import timezone
+from django.utils.dateparse import parse_date
+from urllib.parse import urlsplit
 
 User = get_user_model()
 
@@ -345,6 +348,20 @@ def site_settings(request):
         'whatsapp_community_link': settings.whatsapp_community_link,
         'approval_hours': settings.approval_hours,
         'support_phone': settings.support_phone,
+        'contact_admin_name': settings.contact_admin_name,
+        'contact_admin_purpose': settings.contact_admin_purpose,
+        'contact_instructions': settings.contact_instructions,
+        'whatsapp_contact_number': settings.whatsapp_contact_number,
+        'botim_contact_number': settings.botim_contact_number,
+        'botim_contact_link': settings.botim_contact_link,
+        'whatsapp_icon': settings.whatsapp_icon,
+        'botim_icon': settings.botim_icon,
+        'whatsapp_channel_name': settings.whatsapp_channel_name,
+        'whatsapp_channel_purpose': settings.whatsapp_channel_purpose,
+        'whatsapp_channel_icon': settings.whatsapp_channel_icon,
+        'whatsapp_community_name': settings.whatsapp_community_name,
+        'whatsapp_community_purpose': settings.whatsapp_community_purpose,
+        'whatsapp_community_icon': settings.whatsapp_community_icon,
         'frontend_url': settings.frontend_url,
         'upgrade_payment_method': settings.upgrade_payment_method,
         'upgrade_account_number': settings.upgrade_account_number,
@@ -361,6 +378,26 @@ def site_settings(request):
 @permission_classes([IsAdminUser])
 def update_site_settings(request):
     settings, _ = SiteSettings.objects.get_or_create(id=1)
+
+    image_fields = {
+        'whatsapp_icon', 'botim_icon', 'whatsapp_channel_icon', 'whatsapp_community_icon',
+    }
+    for key in image_fields & request.data.keys():
+        value = request.data[key]
+        if not isinstance(value, str) or (value and not value.startswith('data:image/')):
+            return Response({'error': f'{key} must be an image upload'}, status=400)
+        if len(value) > 350_000:
+            return Response({'error': f'{key} must be 256KB or smaller'}, status=400)
+
+    for key in ('whatsapp_channel_link', 'whatsapp_community_link'):
+        if key in request.data and request.data[key]:
+            parsed = urlsplit(str(request.data[key]))
+            if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+                return Response({'error': f'{key} must be a valid HTTP(S) link'}, status=400)
+    if request.data.get('botim_contact_link'):
+        parsed = urlsplit(str(request.data['botim_contact_link']))
+        if parsed.scheme not in {'http', 'https', 'botim'} or not parsed.netloc:
+            return Response({'error': 'Botim direct contact link must use a supported link format'}, status=400)
     
     price_fields = {
         'package_price_normal': 'normal',
@@ -399,6 +436,20 @@ def public_contact_links(request):
         'whatsapp_channel_link': settings.whatsapp_channel_link,
         'whatsapp_community_link': settings.whatsapp_community_link,
         'support_phone': settings.support_phone,
+        'contact_admin_name': settings.contact_admin_name,
+        'contact_admin_purpose': settings.contact_admin_purpose,
+        'contact_instructions': settings.contact_instructions,
+        'whatsapp_contact_number': settings.whatsapp_contact_number,
+        'botim_contact_number': settings.botim_contact_number,
+        'botim_contact_link': settings.botim_contact_link,
+        'whatsapp_icon': settings.whatsapp_icon,
+        'botim_icon': settings.botim_icon,
+        'whatsapp_channel_name': settings.whatsapp_channel_name,
+        'whatsapp_channel_purpose': settings.whatsapp_channel_purpose,
+        'whatsapp_channel_icon': settings.whatsapp_channel_icon,
+        'whatsapp_community_name': settings.whatsapp_community_name,
+        'whatsapp_community_purpose': settings.whatsapp_community_purpose,
+        'whatsapp_community_icon': settings.whatsapp_community_icon,
     })
 
 @api_view(['GET'])
@@ -693,20 +744,14 @@ def submit_package_payment(request):
             return Response({'error': 'Your package is already active'}, status=400)
         return Response({'error': 'You already have a pending payment. Please wait for verification.'}, status=400)
 
-    try:
-        PackagePayment.objects.create(
-            user=request.user,
-            screenshot=screenshot,
-            package_name=package_name,
-            amount=amount
-        )
-    except Exception:
-        # fallback if migration not run yet
-        PackagePayment.objects.create(
-            user=request.user,
-            screenshot=screenshot,
-            amount=amount
-        )
+    PackagePayment.objects.create(
+        user=request.user,
+        screenshot=screenshot,
+        package_name=package_name,
+        amount=amount,
+        sender_name=request.data.get('sender_name', '').strip(),
+        sender_number=request.data.get('sender_number', '').strip(),
+    )
     hours = get_site_settings().approval_hours or 5
     notify(
         request.user,
@@ -776,7 +821,7 @@ def list_package_payments(request):
     user_id = request.GET.get('user', None)
     fields = [
         'id', 'package_name', 'amount', 'status', 'admin_note', 'submitted_at',
-        'user__username', 'user__email',
+        'sender_name', 'sender_number', 'user__username', 'user__email',
     ]
     qs = PackagePayment.objects.select_related('user').only(*fields)
     if status_filter != 'all':
@@ -791,6 +836,8 @@ def list_package_payments(request):
             'email': p.user.email,
             'package_name': p.package_name,
             'amount': p.amount,
+            'sender_name': p.sender_name,
+            'sender_number': p.sender_number,
             'status': p.status,
             'has_proof': True,
             'admin_note': p.admin_note,
@@ -809,6 +856,83 @@ def package_payment_proof(request, payment_id):
     except PackagePayment.DoesNotExist:
         return Response({'error': 'Not found'}, status=404)
     return Response({'screenshot': payment.screenshot})
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def edit_package_payment(request, payment_id):
+    from decimal import Decimal, InvalidOperation
+    from .models import PackagePaymentEditHistory
+
+    with transaction.atomic():
+        try:
+            payment = PackagePayment.objects.select_for_update().get(pk=payment_id)
+        except PackagePayment.DoesNotExist:
+            return Response({'error': 'Payment request not found'}, status=404)
+        if payment.status == 'approved':
+            return Response({'error': 'Approved payment requests cannot be edited'}, status=400)
+
+        old_values = {
+            'package_name': payment.package_name,
+            'amount': str(payment.amount),
+            'sender_name': payment.sender_name,
+            'sender_number': payment.sender_number,
+            'screenshot': payment.screenshot,
+        }
+        package_name = request.data.get('package_name', payment.package_name)
+        if not isinstance(package_name, str) or package_name not in dict(PackagePayment.PACKAGE_CHOICES):
+            return Response({'error': 'Select a valid package'}, status=400)
+
+        try:
+            amount = Decimal(str(request.data.get('amount', payment.amount)))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response({'error': 'Enter a valid payment amount'}, status=400)
+        if not amount.is_finite() or amount <= 0 or amount > Decimal('99999999.99'):
+            return Response({'error': 'Payment amount must be greater than zero'}, status=400)
+        if amount != amount.quantize(Decimal('0.01')):
+            return Response({'error': 'Payment amount supports up to two decimal places'}, status=400)
+
+        screenshot = request.data.get('screenshot', payment.screenshot)
+        if not isinstance(screenshot, str) or not screenshot:
+            return Response({'error': 'A valid payment screenshot is required'}, status=400)
+        if screenshot != payment.screenshot:
+            if not screenshot.startswith('data:image/'):
+                return Response({'error': 'Upload a valid image screenshot'}, status=400)
+            if len(screenshot) > 3 * 1024 * 1024:
+                return Response({'error': 'Screenshot is too large. Maximum size is 3MB.'}, status=400)
+
+        payment.package_name = package_name
+        payment.amount = amount
+        sender_name = request.data.get('sender_name', payment.sender_name) or ''
+        sender_number = request.data.get('sender_number', payment.sender_number) or ''
+        if not isinstance(sender_name, str) or len(sender_name) > 150:
+            return Response({'error': 'Sender name must be 150 characters or fewer'}, status=400)
+        if not isinstance(sender_number, str) or len(sender_number) > 30:
+            return Response({'error': 'Sender number must be 30 characters or fewer'}, status=400)
+        payment.sender_name = sender_name.strip()
+        payment.sender_number = sender_number.strip()
+        payment.screenshot = screenshot
+        payment.save(update_fields=[
+            'package_name', 'amount', 'sender_name', 'sender_number', 'screenshot',
+        ])
+        PackagePaymentEditHistory.objects.create(
+            payment=payment,
+            admin=request.user,
+            old_values=old_values,
+            new_values={
+                'package_name': payment.package_name,
+                'amount': str(payment.amount),
+                'sender_name': payment.sender_name,
+                'sender_number': payment.sender_number,
+                'screenshot': payment.screenshot,
+            },
+        )
+
+    return Response({
+        'message': 'Payment request updated',
+        'package_name': payment.package_name,
+        'amount': str(payment.amount),
+    })
 
 
 @api_view(['POST'])
@@ -1411,6 +1535,8 @@ def get_user_full(request, user_id):
                 'package_name': pkg_payment.package_name,
                 'amount': float(pkg_payment.amount),
                 'has_proof': True,
+                'sender_name': pkg_payment.sender_name,
+                'sender_number': pkg_payment.sender_number,
                 'admin_note': pkg_payment.admin_note,
                 'submitted_at': pkg_payment.submitted_at,
                 'email': user.email,
@@ -1479,13 +1605,46 @@ def my_upgrade_requests(request):
 def list_upgrade_requests(request):
     from administration.models import PackageUpgrade
     from administration.upgrades import _request_payload
+    selected_date = parse_date(request.GET.get('date', '')) if request.GET.get('date') else timezone.localdate()
+    if selected_date is None:
+        return Response({'error': 'Use a valid date in YYYY-MM-DD format'}, status=400)
+
     status_filter = request.GET.get('status', 'all')
-    qs = PackageUpgrade.objects.select_related('user').defer('user__profile_picture').order_by('-submitted_at')
+    if status_filter not in {'all', 'pending', 'approved', 'rejected'}:
+        return Response({'error': 'Invalid status filter'}, status=400)
+
+    daily = PackageUpgrade.objects.filter(submitted_at__date=selected_date)
+    counts = {
+        status: daily.filter(status=status).count()
+        for status in ('pending', 'approved', 'rejected')
+    }
+    overall = {
+        status: PackageUpgrade.objects.filter(status=status).count()
+        for status in ('pending', 'approved', 'rejected')
+    }
+    received = PackageUpgrade.objects.filter(
+        status='approved',
+        processed_at__date=selected_date,
+    ).aggregate(total=Sum('remaining_amount'))['total'] or 0
+
+    qs = daily.select_related('user').defer('user__profile_picture').order_by('-submitted_at')
     if status_filter != 'all':
         qs = qs.filter(status=status_filter)
+    search = request.GET.get('search', '').strip()
+    if search:
+        qs = qs.filter(
+            Q(user__username__icontains=search)
+            | Q(user__email__icontains=search)
+            | Q(transaction_id__icontains=search)
+        )
     return Response({
-        'requests': [_request_payload(row, include_proof=False) for row in qs.defer('screenshot')[:100]],
-        'pending': PackageUpgrade.objects.filter(status='pending').count(),
+        'requests': [_request_payload(row, include_proof=False) for row in qs[:100]],
+        'date': selected_date.isoformat(),
+        'counts': counts,
+        'overall': overall,
+        'received_balance': float(received),
+        'total': sum(counts.values()),
+        'pending': counts['pending'],
     })
 
 
@@ -1528,4 +1687,3 @@ def reject_upgrade_request(request, upgrade_id):
     if result == 'already':
         return Response({'error': 'Upgrade already rejected'}, status=400)
     return Response({'message': 'Upgrade rejected'})
-

@@ -31,6 +31,7 @@ urlpatterns = [
     # Package Payments
     path('payment-account/', views.manage_payment_account, name='manage_payment_account'),
     path('package-payments/', views.list_package_payments, name='list_package_payments'),
+    path('package-payments/<int:payment_id>/edit/', views.edit_package_payment, name='edit_package_payment'),
     path('package-payments/count/', views.pending_package_count, name='pending_package_count'),
     path('package-proof/<int:payment_id>/', views.package_payment_proof, name='package_payment_proof'),
     path('upgrade-proof/<int:upgrade_id>/', views.upgrade_payment_proof, name='upgrade_payment_proof'),

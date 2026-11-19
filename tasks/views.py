@@ -47,8 +47,8 @@ def get_user_package(user):
         pass
     payment = (
         PackagePayment.objects.filter(user=user, status='approved')
-        .order_by('-id')
         .only('package_name')
+        .order_by('-id')
         .first()
     )
     return payment.package_name if payment else None

@@ -10,6 +10,11 @@ class UserSerializer(serializers.ModelSerializer):
     referred_by_code = serializers.SerializerMethodField()
     unread_notifications = serializers.SerializerMethodField()
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.context.get('omit_picture'):
+            self.fields.pop('profile_picture', None)
+
     class Meta:
         model = User
         fields = [
@@ -29,7 +34,12 @@ class UserSerializer(serializers.ModelSerializer):
     def get_referred_by_code(self, obj):
         if not obj.referred_by_id:
             return ''
-        return obj.referred_by.referral_code
+        code = (
+            User.objects.filter(pk=obj.referred_by_id)
+            .values_list('referral_code', flat=True)
+            .first()
+        )
+        return code or ''
 
     def get_unread_notifications(self, obj):
         return obj.notifications.filter(is_read=False).count()

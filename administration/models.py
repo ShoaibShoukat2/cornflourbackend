@@ -11,6 +11,19 @@ def empty_dict():
 def empty_list():
     return []
 
+
+class HideScreenshotManager(models.Manager):
+    """Payment proof images stay out of list and status queries."""
+
+    def get_queryset(self):
+        return super().get_queryset().defer('screenshot')
+
+
+class SiteSettingsManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().defer('terms_sections')
+
+
 class SiteSettings(models.Model):
     minimum_withdrawal = models.DecimalField(max_digits=10, decimal_places=2, default=5.00)
     signup_bonus = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.50'))
@@ -73,7 +86,9 @@ class SiteSettings(models.Model):
     )
     terms_sections = models.JSONField(default=empty_list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
+    objects = SiteSettingsManager()
+
     class Meta:
         verbose_name_plural = "Site Settings"
     
@@ -116,8 +131,14 @@ class PackagePayment(models.Model):
     submitted_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
 
+    objects = HideScreenshotManager()
+
     class Meta:
         ordering = ['-submitted_at']
+        indexes = [
+            models.Index(fields=['status', 'submitted_at']),
+            models.Index(fields=['user', 'status']),
+        ]
 
     def __str__(self):
         return f"{self.user.username} - {self.status}"
@@ -143,8 +164,13 @@ class PackageUpgrade(models.Model):
     submitted_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
 
+    objects = HideScreenshotManager()
+
     class Meta:
         ordering = ['-submitted_at']
+        indexes = [
+            models.Index(fields=['user', 'status']),
+        ]
 
     def __str__(self):
         return f'{self.user_id} {self.from_package} -> {self.to_package} {self.status}'

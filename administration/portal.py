@@ -79,7 +79,7 @@ def user_complaints(request):
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def admin_complaints(request):
-    rows = Complaint.objects.select_related('user').all()[:300]
+    rows = Complaint.objects.select_related('user').defer('user__profile_picture').all()[:300]
     return Response({
         'count': Complaint.objects.count(),
         'complaints': [_complaint_payload(row, include_user=True) for row in rows],
@@ -123,7 +123,7 @@ def _range_bounds(request):
 def history_rows(start, end, kind='all'):
     rows = []
     if kind in ('all', 'joining'):
-        for user in User.objects.filter(created_at__date__gte=start, created_at__date__lte=end).order_by('-created_at')[:400]:
+        for user in User.objects.filter(created_at__date__gte=start, created_at__date__lte=end).defer('profile_picture').order_by('-created_at')[:400]:
             rows.append({
                 'kind': 'joining',
                 'when': user.created_at,
@@ -134,7 +134,7 @@ def history_rows(start, end, kind='all'):
                 'status': 'active' if user.is_active else 'inactive',
             })
     if kind in ('all', 'approval'):
-        for payment in PackagePayment.objects.filter(submitted_at__date__gte=start, submitted_at__date__lte=end).select_related('user')[:400]:
+        for payment in PackagePayment.objects.filter(submitted_at__date__gte=start, submitted_at__date__lte=end).select_related('user').defer('user__profile_picture')[:400]:
             rows.append({
                 'kind': 'approval',
                 'when': payment.processed_at or payment.submitted_at,
@@ -145,7 +145,7 @@ def history_rows(start, end, kind='all'):
                 'status': payment.status,
             })
     if kind in ('all', 'withdrawal'):
-        for item in Withdrawal.objects.filter(created_at__date__gte=start, created_at__date__lte=end).select_related('user')[:400]:
+        for item in Withdrawal.objects.filter(created_at__date__gte=start, created_at__date__lte=end).select_related('user').defer('user__profile_picture')[:400]:
             rows.append({
                 'kind': 'withdrawal',
                 'when': item.processed_at or item.created_at,
@@ -156,7 +156,7 @@ def history_rows(start, end, kind='all'):
                 'status': item.status,
             })
     if kind in ('all', 'transaction'):
-        for item in Transaction.objects.filter(created_at__date__gte=start, created_at__date__lte=end).select_related('user')[:400]:
+        for item in Transaction.objects.filter(created_at__date__gte=start, created_at__date__lte=end).select_related('user').defer('user__profile_picture')[:400]:
             rows.append({
                 'kind': 'transaction',
                 'when': item.created_at,
@@ -167,7 +167,7 @@ def history_rows(start, end, kind='all'):
                 'status': item.transaction_type,
             })
     if kind in ('all', 'complaint'):
-        for item in Complaint.objects.filter(created_at__date__gte=start, created_at__date__lte=end).select_related('user')[:400]:
+        for item in Complaint.objects.filter(created_at__date__gte=start, created_at__date__lte=end).select_related('user').defer('user__profile_picture')[:400]:
             rows.append({
                 'kind': 'complaint',
                 'when': item.created_at,

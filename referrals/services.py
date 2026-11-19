@@ -273,23 +273,26 @@ def refresh_user_level(user):
 
 
 def collect_downline(user, max_depth=9):
-    frontier = list(User.objects.filter(referred_by=user).values_list('id', flat=True))
-    result = [(member_id, 1) for member_id in frontier]
-    seen = set(frontier)
-    depth = 1
-    while frontier and depth < max_depth:
-        depth += 1
-        children = list(
-            User.objects.filter(referred_by_id__in=frontier)
-            .exclude(id__in=seen)
-            .values_list('id', flat=True)
+    from django.db import connection
+
+    table = User._meta.db_table
+    sql = f'''
+        WITH RECURSIVE downline AS (
+            SELECT id, 1 AS depth, CAST(id AS TEXT) AS path
+            FROM {table}
+            WHERE referred_by_id = %s
+            UNION ALL
+            SELECT u.id, d.depth + 1, d.path || ',' || CAST(u.id AS TEXT)
+            FROM {table} u
+            INNER JOIN downline d ON u.referred_by_id = d.id
+            WHERE d.depth < %s
+              AND instr(',' || d.path || ',', ',' || CAST(u.id AS TEXT) || ',') = 0
         )
-        if not children:
-            break
-        seen.update(children)
-        result.extend((member_id, depth) for member_id in children)
-        frontier = children
-    return result
+        SELECT id, depth FROM downline
+    '''
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [user.pk, max_depth])
+        return [(row[0], int(row[1])) for row in cursor.fetchall()]
 
 
 def commission_totals(user):
@@ -371,7 +374,11 @@ def team_member_rows(user, limit=200):
         return []
 
     latest = {}
-    payments = PackagePayment.objects.filter(user_id__in=ids, status='approved').order_by('user_id', '-processed_at')
+    payments = (
+        PackagePayment.objects.filter(user_id__in=ids, status='approved')
+        .only('user', 'package_name', 'amount', 'processed_at')
+        .order_by('user_id', '-processed_at')
+    )
     for payment in payments:
         latest.setdefault(payment.user_id, payment)
 
@@ -381,7 +388,7 @@ def team_member_rows(user, limit=200):
         .values('referred_user_id')
         .annotate(total=Sum('amount'))
     }
-    members = User.objects.filter(id__in=ids).select_related('wallet')
+    members = User.objects.filter(id__in=ids).select_related('wallet').defer('profile_picture')
     rows = []
     for member in members:
         payment = latest.get(member.id)
@@ -484,7 +491,7 @@ def approve_package(payment_id, note='Approved'):
 
     with transaction.atomic():
         try:
-            payment = PackagePayment.objects.select_for_update().select_related('user').get(pk=payment_id)
+            payment = PackagePayment.objects.select_for_update().select_related('user').defer('user__profile_picture').get(pk=payment_id)
         except PackagePayment.DoesNotExist:
             return 'missing'
         if payment.status == 'approved':
@@ -512,7 +519,7 @@ def reject_package(payment_id, reason='Rejected'):
 
     with transaction.atomic():
         try:
-            payment = PackagePayment.objects.select_for_update().select_related('user').get(pk=payment_id)
+            payment = PackagePayment.objects.select_for_update().select_related('user').defer('user__profile_picture').get(pk=payment_id)
         except PackagePayment.DoesNotExist:
             return 'missing'
         if payment.status == 'approved':
@@ -538,7 +545,12 @@ def build_dashboard(user):
     from wallet.models import Transaction, Wallet, Withdrawal
 
     wallet, _ = Wallet.objects.get_or_create(user=user)
-    payment = PackagePayment.objects.filter(user=user).order_by('-submitted_at').first()
+    payment = (
+        PackagePayment.objects.filter(user=user)
+        .only('status', 'package_name', 'amount', 'admin_note', 'submitted_at', 'processed_at')
+        .order_by('-submitted_at')
+        .first()
+    )
     plan = approval_meta(payment)
     from administration.upgrades import current_package_name, total_verified_paid
     from administration.models import PackageUpgrade

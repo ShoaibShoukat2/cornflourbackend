@@ -61,7 +61,7 @@ def register(request):
 
         return Response({
             'token': token.key,
-            'user': UserSerializer(user).data
+            'user': UserSerializer(user, context={'omit_picture': True}).data
         }, status=status.HTTP_201_CREATED)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -73,19 +73,21 @@ def login(request):
     if serializer.is_valid():
         email = serializer.validated_data['email']
         password = serializer.validated_data['password']
-        candidate = User.objects.filter(email=email).first()
+        candidate = User.objects.filter(email=email).only(
+            'id', 'password', 'is_active', 'is_blocked', 'block_reason', 'email', 'username', 'is_staff',
+        ).first()
         if candidate and candidate.check_password(password) and (not candidate.is_active or candidate.is_blocked):
             return Response(
                 {'error': candidate.block_reason or 'This account is blocked. Contact support.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
         user = authenticate(username=email, password=password)
-        
+
         if user:
             token, _ = Token.objects.get_or_create(user=user)
             return Response({
                 'token': token.key,
-                'user': UserSerializer(user).data
+                'user': UserSerializer(user, context={'omit_picture': True}).data
             })
         
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -102,9 +104,11 @@ def logout(request):
 @permission_classes([IsAuthenticated])
 def profile(request):
     from referrals.services import level_progress
+    # Level math is a small count. The photo is loaded only when the client asks for it.
     level_progress(request.user)
     request.user.refresh_from_db(fields=['level', 'level_bonus_paid'])
-    return Response(UserSerializer(request.user).data)
+    lite = str(request.query_params.get('lite', '')) == '1'
+    return Response(UserSerializer(request.user, context={'omit_picture': lite}).data)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -277,7 +281,7 @@ def reset_password(request):
 @permission_classes([IsAuthenticated])
 def dashboard_stats(request):
     data = build_dashboard(request.user)
-    data['user'] = UserSerializer(request.user).data
+    data['user'] = UserSerializer(request.user, context={'omit_picture': True}).data
     data['stats']['total_referrals'] = data['team']['direct']
     data['stats']['referral_earnings'] = data['commissions']['total']
     return Response(data)

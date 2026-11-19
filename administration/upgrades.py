@@ -32,6 +32,7 @@ def current_package_name(user):
 
     upgrade = (
         PackageUpgrade.objects.filter(user=user, status='approved')
+        .only('to_package')
         .order_by('-processed_at', '-id')
         .first()
     )
@@ -39,6 +40,7 @@ def current_package_name(user):
         return upgrade.to_package
     payment = (
         PackagePayment.objects.filter(user=user, status='approved')
+        .only('package_name')
         .order_by('-processed_at', '-submitted_at', '-id')
         .first()
     )
@@ -99,11 +101,7 @@ def upgrade_quote(user):
     prices = package_prices(settings)
     current = current_package_name(user)
     paid = total_verified_paid(user) if current else Decimal('0')
-    pending = (
-        PackageUpgrade.objects.filter(user=user, status='pending')
-        .select_related('user')
-        .first()
-    )
+    pending = PackageUpgrade.objects.filter(user=user, status='pending').first()
     packages = []
     for key in PACKAGE_ORDER:
         price = Decimal(prices[key])
@@ -199,7 +197,12 @@ def approve_upgrade(upgrade_id, note='Approved'):
 
     with transaction.atomic():
         try:
-            upgrade = PackageUpgrade.objects.select_for_update().select_related('user').get(pk=upgrade_id)
+            upgrade = (
+                PackageUpgrade.objects.select_for_update()
+                .select_related('user')
+                .defer('user__profile_picture')
+                .get(pk=upgrade_id)
+            )
         except PackageUpgrade.DoesNotExist:
             return 'missing'
         if upgrade.status == 'approved':
@@ -233,7 +236,12 @@ def reject_upgrade(upgrade_id, reason='Rejected'):
 
     with transaction.atomic():
         try:
-            upgrade = PackageUpgrade.objects.select_for_update().select_related('user').get(pk=upgrade_id)
+            upgrade = (
+                PackageUpgrade.objects.select_for_update()
+                .select_related('user')
+                .defer('user__profile_picture')
+                .get(pk=upgrade_id)
+            )
         except PackageUpgrade.DoesNotExist:
             return 'missing'
         if upgrade.status == 'approved':

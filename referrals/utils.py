@@ -18,6 +18,7 @@ def get_user_package_approved_at(user):
 
     pkg = (
         PackagePayment.objects.filter(user=user, status='approved')
+        .only('processed_at', 'submitted_at')
         .order_by('processed_at', 'submitted_at')
         .first()
     )

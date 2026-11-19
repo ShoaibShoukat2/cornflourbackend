@@ -48,6 +48,9 @@ class UserTask(models.Model):
         # Allow same task daily — unique per user+task+date
         unique_together = ['user', 'task', 'date']
         ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['user', 'status', 'date']),
+        ]
     
     def __str__(self):
         return f"{self.user.username} - {self.task.title}"

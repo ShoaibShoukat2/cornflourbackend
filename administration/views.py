@@ -447,7 +447,9 @@ def get_all_users(request):
     approved_pay = PackagePayment.objects.filter(user_id=OuterRef('pk'), status='approved')
     pending_pay = PackagePayment.objects.filter(user_id=OuterRef('pk'), status='pending')
     rejected_pay = PackagePayment.objects.filter(user_id=OuterRef('pk'), status='rejected')
-    users = qs.select_related('wallet', 'referred_by').annotate(
+    users = qs.select_related('wallet', 'referred_by').defer(
+        'profile_picture', 'referred_by__profile_picture',
+    ).annotate(
         direct_team=Count('referrals', distinct=True),
         has_approved=Exists(approved_pay),
         has_pending=Exists(pending_pay),
@@ -632,7 +634,7 @@ def get_all_withdrawals(request):
     else:
         withdrawals = Withdrawal.objects.filter(status=status_filter)
     
-    withdrawals = withdrawals.select_related('user').order_by('-created_at')[:100]
+    withdrawals = withdrawals.select_related('user').defer('user__profile_picture').order_by('-created_at')[:100]
     
     withdrawal_data = []
     for w in withdrawals:
@@ -723,7 +725,12 @@ def submit_package_payment(request):
 @permission_classes([IsAuthenticated])
 def my_package_status(request):
     from referrals.services import approval_meta
-    payment = PackagePayment.objects.filter(user=request.user).order_by('-submitted_at').first()
+    payment = (
+        PackagePayment.objects.filter(user=request.user)
+        .only('status', 'package_name', 'amount', 'admin_note', 'submitted_at', 'processed_at')
+        .order_by('-submitted_at')
+        .first()
+    )
     return Response(approval_meta(payment))
 
 
@@ -855,7 +862,7 @@ def get_user_withdrawals(request, user_id):
 @permission_classes([IsAdminUser])
 def get_user_detail(request, user_id):
     try:
-        user = User.objects.select_related('wallet', 'referred_by').get(id=user_id)
+        user = User.objects.select_related('wallet', 'referred_by').defer('profile_picture', 'referred_by__profile_picture').get(id=user_id)
         try:
             wallet = user.wallet
         except Wallet.DoesNotExist:
@@ -1072,7 +1079,7 @@ def all_approved_users(request):
     today = date.today()
     users = User.objects.filter(
         package_payments__status='approved'
-    ).distinct().select_related('wallet').prefetch_related(
+    ).distinct().select_related('wallet').defer('profile_picture').prefetch_related(
         Prefetch(
             'package_payments',
             queryset=PackagePayment.objects.filter(status='approved').order_by('-submitted_at'),
@@ -1115,7 +1122,7 @@ def new_user_requests(request):
     pending = list(
         PackagePayment.objects.filter(status='pending')
         .select_related('user')
-        .defer('screenshot')
+        .defer('screenshot', 'user__profile_picture')
         .order_by('submitted_at')[:100]
     )
     data = []
@@ -1151,7 +1158,7 @@ def withdrawal_requests(request):
     today = date.today()
     method = request.GET.get('method', 'all')
 
-    qs = Withdrawal.objects.filter(status='pending').select_related('user').order_by('-created_at')
+    qs = Withdrawal.objects.filter(status='pending').select_related('user').defer('user__profile_picture').order_by('-created_at')
     if method != 'all':
         qs = qs.filter(payment_method=method)
 
@@ -1191,7 +1198,7 @@ def rejected_users(request):
     """Users with rejected packages"""
     rejected = PackagePayment.objects.filter(
         status='rejected'
-    ).select_related('user').order_by('-processed_at')
+    ).select_related('user').defer('user__profile_picture').order_by('-processed_at')
 
     data = [{
         'id': p.id,
@@ -1325,7 +1332,7 @@ def get_user_transactions(request, user_id):
 def get_user_full(request, user_id):
     """Single endpoint â€” returns all user data in one call"""
     try:
-        user = User.objects.select_related('wallet', 'referred_by').get(id=user_id)
+        user = User.objects.select_related('wallet', 'referred_by').defer('profile_picture', 'referred_by__profile_picture').get(id=user_id)
         try:
             wallet = user.wallet
         except Wallet.DoesNotExist:
@@ -1463,7 +1470,7 @@ def submit_upgrade_request(request):
 def my_upgrade_requests(request):
     from administration.models import PackageUpgrade
     from administration.upgrades import _request_payload
-    rows = PackageUpgrade.objects.filter(user=request.user).select_related('user')
+    rows = PackageUpgrade.objects.filter(user=request.user).select_related('user').defer('user__profile_picture')
     return Response([_request_payload(row) for row in rows])
 
 
@@ -1473,7 +1480,7 @@ def list_upgrade_requests(request):
     from administration.models import PackageUpgrade
     from administration.upgrades import _request_payload
     status_filter = request.GET.get('status', 'all')
-    qs = PackageUpgrade.objects.select_related('user').order_by('-submitted_at')
+    qs = PackageUpgrade.objects.select_related('user').defer('user__profile_picture').order_by('-submitted_at')
     if status_filter != 'all':
         qs = qs.filter(status=status_filter)
     return Response({

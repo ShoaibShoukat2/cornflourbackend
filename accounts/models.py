@@ -1,6 +1,14 @@
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 import uuid
+
+
+class InstovaUserManager(UserManager):
+    """Keep the base64 profile photo out of ordinary user queries."""
+
+    def get_queryset(self):
+        return super().get_queryset().defer('profile_picture')
+
 
 class User(AbstractUser):
     username = models.CharField(max_length=150)  # not unique, display name only
@@ -26,7 +34,9 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     profile_picture = models.TextField(blank=True, default='')
     level_bonus_paid = models.IntegerField(default=0)
-    
+
+    objects = InstovaUserManager()
+
     def save(self, *args, **kwargs):
         if not self.referral_code:
             self.referral_code = str(uuid.uuid4())[:8].upper()

@@ -19,52 +19,56 @@ User = get_user_model()
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def admin_dashboard_stats(request):
-    cached = cache.get('admin_dash_stats_v2')
+    cached = cache.get('admin_dash_stats_v3')
     if cached is not None:
         return Response(cached)
-    today = date.today()
+    today_start, today_end = _local_day_bounds(date.today())
     from referrals.models import ReferralEarning
 
     users = User.objects.aggregate(
         total=Count('id'),
         active=Count('id', filter=Q(is_active=True)),
-        new_today=Count('id', filter=Q(created_at__date=today)),
+        new_today=Count('id', filter=Q(created_at__gte=today_start, created_at__lt=today_end)),
         blocked=Count('id', filter=Q(is_active=False)),
+        inactive=Count('id', filter=Q(is_active=False) | Q(is_blocked=True)),
+        team=Count('id', filter=Q(is_staff=False)),
     )
-    approved_users = User.objects.filter(package_payments__status='approved').distinct().count()
-    pending_accounts = PackagePayment.objects.filter(status='pending').values('user').distinct().count()
-    rejected_accounts = User.objects.filter(
-        package_payments__status='rejected',
-    ).exclude(package_payments__status='approved').distinct().count()
-    inactive_members = User.objects.filter(Q(is_active=False) | Q(is_blocked=True)).distinct().count()
-    team_members = User.objects.filter(is_staff=False).count()
+    approved_users = PackagePayment.objects.filter(status='approved').values('user_id').distinct().count()
+    pending_accounts = PackagePayment.objects.filter(status='pending').values('user_id').distinct().count()
+    rejected_accounts = (
+        PackagePayment.objects.filter(status='rejected')
+        .exclude(user_id__in=PackagePayment.objects.filter(status='approved').values('user_id'))
+        .values('user_id')
+        .distinct()
+        .count()
+    )
 
     packages = PackagePayment.objects.aggregate(
         total_deposited=Sum('amount', filter=Q(status='approved')),
-        today_deposited=Sum('amount', filter=Q(status='approved', processed_at__date=today)),
-        today_approved=Count('user', distinct=True, filter=Q(status='approved', processed_at__date=today)),
+        today_deposited=Sum('amount', filter=Q(status='approved', processed_at__gte=today_start, processed_at__lt=today_end)),
+        today_approved=Count('user', distinct=True, filter=Q(status='approved', processed_at__gte=today_start, processed_at__lt=today_end)),
     )
 
     wallets = Wallet.objects.aggregate(total_earnings=Sum('total_earned'))
     withdrawals = Withdrawal.objects.aggregate(
         total=Sum('amount', filter=Q(status='approved')),
-        today=Sum('amount', filter=Q(status='approved', processed_at__date=today)),
+        today=Sum('amount', filter=Q(status='approved', processed_at__gte=today_start, processed_at__lt=today_end)),
         pending_amt=Sum('amount', filter=Q(status='pending')),
         pending_count=Count('id', filter=Q(status='pending')),
     )
     total_referral_commission = ReferralEarning.objects.aggregate(s=Sum('amount'))['s'] or 0
 
-    tx = Transaction.objects.aggregate(
+    tx = Transaction.objects.filter(transaction_type__in=['task', 'bonus']).aggregate(
         task_earnings=Sum('amount', filter=Q(transaction_type='task')),
-        manual_additions=Sum('amount', filter=Q(transaction_type='bonus', description__icontains='Admin bonus')),
-        manual_subtractions=Sum('amount', filter=Q(transaction_type='bonus', description__icontains='Admin deduct')),
+        manual_additions=Sum('amount', filter=Q(transaction_type='bonus', description__startswith='Admin bonus')),
+        manual_subtractions=Sum('amount', filter=Q(transaction_type='bonus', description__startswith='Admin deduct')),
     )
     tasks = Task.objects.aggregate(
         total=Count('id'),
         active=Count('id', filter=Q(is_active=True)),
     )
     user_tasks = UserTask.objects.aggregate(
-        completed_today=Count('id', filter=Q(completed_at__date=today, status='verified')),
+        completed_today=Count('id', filter=Q(status='verified', completed_at__gte=today_start, completed_at__lt=today_end)),
         total_completed=Count('id', filter=Q(status='verified')),
     )
     fraud = FraudDetection.objects.aggregate(
@@ -76,6 +80,8 @@ def admin_dashboard_stats(request):
     active_users = users['active'] or 0
     new_users_today = users['new_today'] or 0
     blocked_users = users['blocked'] or 0
+    inactive_members = users['inactive'] or 0
+    team_members = users['team'] or 0
     today_approved = packages['today_approved'] or 0
     today_deposited = packages['today_deposited'] or 0
     total_earnings = wallets['total_earnings'] or 0
@@ -137,7 +143,7 @@ def admin_dashboard_stats(request):
             'critical_frauds': critical_frauds,
         }
     }
-    cache.set('admin_dash_stats_v2', payload, 45)
+    cache.set('admin_dash_stats_v3', payload, 90)
     return Response(payload)
 
 @api_view(['GET'])
@@ -190,6 +196,15 @@ def _wallet_to_rs(amount):
     return float(amount or 0) * 100
 
 
+def _local_day_bounds(day):
+    """Midnight-to-midnight range so SQLite can use the datetime index."""
+    from datetime import datetime, time
+    start = datetime.combine(day, time.min)
+    if timezone.is_naive(start):
+        start = timezone.make_aware(start, timezone.get_current_timezone())
+    return start, start + timedelta(days=1)
+
+
 def _as_date(value):
     if value is None:
         return None
@@ -205,16 +220,18 @@ def admin_dashboard_charts(request):
     from referrals.models import ReferralEarning
 
     days = min(30, max(7, int(request.GET.get('days', 14))))
-    cache_key = f'admin_dash_charts_v2_{days}'
+    cache_key = f'admin_dash_charts_v3_{days}'
     cached = cache.get(cache_key)
     if cached is not None:
         return Response(cached)
     end_date = date.today()
     start_date = end_date - timedelta(days=days - 1)
+    range_start, _ = _local_day_bounds(start_date)
+    _, range_end = _local_day_bounds(end_date)
 
     users_by_day = {
         _as_date(row['d']): row['c']
-        for row in User.objects.filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
+        for row in User.objects.filter(created_at__gte=range_start, created_at__lt=range_end)
         .annotate(d=TruncDate('created_at'))
         .values('d')
         .annotate(c=Count('id'))
@@ -222,19 +239,19 @@ def admin_dashboard_charts(request):
     deps_by_day = {
         _as_date(row['d']): float(row['s'] or 0)
         for row in PackagePayment.objects.filter(
-            status='approved', processed_at__date__gte=start_date, processed_at__date__lte=end_date
+            status='approved', processed_at__gte=range_start, processed_at__lt=range_end
         ).annotate(d=TruncDate('processed_at')).values('d').annotate(s=Sum('amount'))
     }
     wdr_by_day = {
         _as_date(row['d']): _wallet_to_rs(row['s'])
         for row in Withdrawal.objects.filter(
-            status='approved', processed_at__date__gte=start_date, processed_at__date__lte=end_date
+            status='approved', processed_at__gte=range_start, processed_at__lt=range_end
         ).annotate(d=TruncDate('processed_at')).values('d').annotate(s=Sum('amount'))
     }
     ref_by_day = {
         _as_date(row['d']): _wallet_to_rs(row['s'])
         for row in ReferralEarning.objects.filter(
-            created_at__date__gte=start_date, created_at__date__lte=end_date
+            created_at__gte=range_start, created_at__lt=range_end
         ).annotate(d=TruncDate('created_at')).values('d').annotate(s=Sum('amount'))
     }
 
@@ -254,7 +271,7 @@ def admin_dashboard_charts(request):
         referral_payout_rs.append(ref_by_day.get(d, 0))
         net_profit_rs.append(deposits_rs[-1] - withdrawals_rs[-1] - referral_payout_rs[-1])
 
-    premium_users = User.objects.filter(package_payments__status='approved').distinct().count()
+    premium_users = PackagePayment.objects.filter(status='approved').values('user_id').distinct().count()
     total_users = User.objects.count()
     free_users = max(0, total_users - premium_users)
 

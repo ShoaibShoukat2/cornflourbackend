@@ -37,6 +37,15 @@ class User(AbstractUser):
 
     objects = InstovaUserManager()
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['-created_at'], name='user_created_idx'),
+            models.Index(
+                fields=['is_active', 'is_staff', 'is_blocked', 'created_at'],
+                name='user_status_cover_idx',
+            ),
+        ]
+
     def save(self, *args, **kwargs):
         if not self.referral_code:
             self.referral_code = str(uuid.uuid4())[:8].upper()

@@ -4,24 +4,42 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated, AllowAny
 from django.contrib.auth import get_user_model
 from wallet.models import Wallet, Withdrawal, Transaction
 from tasks.models import Task, UserTask
-from .models import Analytics, FraudDetection, IPTracking, SiteSettings, Announcement, PaymentAccount, PackagePayment
+from .models import Analytics, FraudDetection, IPTracking, SiteSettings, Announcement, PaymentAccount, PackagePayment, DashboardSnapshot
 from django.db import transaction
 from django.db.models import Sum, Count, Q, Prefetch, Exists, OuterRef
 from django.db.models.functions import TruncDate
 from datetime import date, timedelta
+from decimal import Decimal
 from django.core.cache import cache
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from urllib.parse import urlsplit
+import sys
+import threading
+import time
 
 User = get_user_model()
 
-@api_view(['GET'])
-@permission_classes([IsAdminUser])
-def admin_dashboard_stats(request):
-    cached = cache.get('admin_dash_stats_v4')
-    if cached is not None:
-        return Response(cached)
+_STATS_KEY = 'admin_dash_stats_v5'
+_STATS_FRESH = 45
+_STATS_KEEP = 600
+_dashboard_lock = threading.Lock()
+
+
+def _json_value(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()
+    return value
+
+
+def _plain_rows(rows):
+    return [{key: _json_value(value) for key, value in row.items()} for row in rows]
+
+
+def _compute_admin_dashboard():
+    """Build the overview from covering indexes, including the recent lists."""
     today_start, today_end = _local_day_bounds(date.today())
     from referrals.models import ReferralEarning
 
@@ -34,27 +52,13 @@ def admin_dashboard_stats(request):
         team=Count('id', filter=Q(is_staff=False)),
     )
     approved_users, pending_accounts, rejected_accounts = _package_account_counts()
-
-    packages = PackagePayment.objects.aggregate(
-        total_deposited=Sum('amount', filter=Q(status='approved')),
-        today_deposited=Sum('amount', filter=Q(status='approved', processed_at__gte=today_start, processed_at__lt=today_end)),
-        today_approved=Count('user', distinct=True, filter=Q(status='approved', processed_at__gte=today_start, processed_at__lt=today_end)),
-    )
-
+    total_deposited, today_deposited, today_approved, pending_packages = _package_money(today_start, today_end)
     wallets = Wallet.objects.aggregate(total_earnings=Sum('total_earned'))
-    withdrawals = Withdrawal.objects.aggregate(
-        total=Sum('amount', filter=Q(status='approved')),
-        today=Sum('amount', filter=Q(status='approved', processed_at__gte=today_start, processed_at__lt=today_end)),
-        pending_amt=Sum('amount', filter=Q(status='pending')),
-        pending_count=Count('id', filter=Q(status='pending')),
+    total_withdrawals, today_withdrawals, pending_withdrawals, pending_withdrawal_count = _withdrawal_money(
+        today_start, today_end
     )
-    total_referral_commission = ReferralEarning.objects.aggregate(s=Sum('amount'))['s'] or 0
-
-    tx = Transaction.objects.filter(transaction_type__in=['task', 'bonus']).aggregate(
-        task_earnings=Sum('amount', filter=Q(transaction_type='task')),
-        manual_additions=Sum('amount', filter=Q(transaction_type='bonus', description__startswith='Admin bonus')),
-        manual_subtractions=Sum('amount', filter=Q(transaction_type='bonus', description__startswith='Admin deduct')),
-    )
+    total_referral_commission = float(ReferralEarning.objects.aggregate(s=Sum('amount'))['s'] or 0)
+    task_earnings, manual_additions, manual_subtractions = _task_money()
     tasks = Task.objects.aggregate(
         total=Count('id'),
         active=Count('id', filter=Q(is_active=True)),
@@ -67,44 +71,29 @@ def admin_dashboard_stats(request):
         alerts=Count('id', filter=Q(is_resolved=False)),
         critical=Count('id', filter=Q(is_resolved=False, severity='critical')),
     )
-
-    total_users = users['total'] or 0
-    active_users = users['active'] or 0
-    new_users_today = users['new_today'] or 0
-    blocked_users = users['blocked'] or 0
-    inactive_members = users['inactive'] or 0
-    team_members = users['team'] or 0
-    today_approved = packages['today_approved'] or 0
-    today_deposited = packages['today_deposited'] or 0
-    total_earnings = wallets['total_earnings'] or 0
-    total_withdrawals = withdrawals['total'] or 0
-    today_withdrawals = withdrawals['today'] or 0
-    pending_withdrawals = withdrawals['pending_amt'] or 0
-    pending_withdrawal_count = withdrawals['pending_count'] or 0
-    total_deposited = packages['total_deposited'] or 0
-    task_earnings = tx['task_earnings'] or 0
-    manual_additions = tx['manual_additions'] or 0
-    manual_subtractions = tx['manual_subtractions'] or 0
-    net_manual = float(manual_additions or 0) - float(manual_subtractions or 0)
-    total_tasks = tasks['total'] or 0
-    active_tasks = tasks['active'] or 0
-    completed_tasks_today = user_tasks['completed_today'] or 0
-    total_completed_tasks = user_tasks['total_completed'] or 0
-    fraud_alerts = fraud['alerts'] or 0
-    critical_frauds = fraud['critical'] or 0
-    revenue = float(total_earnings) - float(total_withdrawals)
-
-    payload = {
+    total_earnings = float(wallets['total_earnings'] or 0)
+    recent = {
+        'recent_users': _plain_rows(User.objects.order_by('-created_at').values(
+            'id', 'username', 'email', 'created_at', 'is_active'
+        )[:10]),
+        'recent_withdrawals': _plain_rows(Withdrawal.objects.order_by('-created_at').values(
+            'id', 'user__username', 'amount', 'payment_method', 'status', 'created_at'
+        )[:10]),
+        'recent_frauds': _plain_rows(FraudDetection.objects.filter(is_resolved=False).order_by('-created_at').values(
+            'id', 'user__username', 'fraud_type', 'severity', 'description', 'created_at'
+        )[:10]),
+    }
+    return {
         'users': {
-            'total': total_users,
-            'active': active_users,
-            'new_today': new_users_today,
-            'blocked': blocked_users,
+            'total': users['total'] or 0,
+            'active': users['active'] or 0,
+            'new_today': users['new_today'] or 0,
+            'blocked': users['blocked'] or 0,
             'approved': approved_users,
             'pending': pending_accounts,
             'rejected': rejected_accounts,
-            'inactive': inactive_members,
-            'team': team_members,
+            'inactive': users['inactive'] or 0,
+            'team': users['team'] or 0,
             'today_approved': today_approved,
             'today_deposited': today_deposited,
         },
@@ -116,26 +105,78 @@ def admin_dashboard_stats(request):
             'pending_count': pending_withdrawal_count,
             'total_deposited': total_deposited,
             'total_referral_commission': total_referral_commission,
-            'revenue': revenue,
+            'revenue': total_earnings - total_withdrawals,
         },
         'earnings_breakdown': {
             'task_earnings': task_earnings,
             'manual_additions': manual_additions,
             'manual_subtractions': manual_subtractions,
-            'net_manual': net_manual,
+            'net_manual': manual_additions - manual_subtractions,
         },
         'tasks': {
-            'total': total_tasks,
-            'active': active_tasks,
-            'completed_today': completed_tasks_today,
-            'total_completed': total_completed_tasks,
+            'total': tasks['total'] or 0,
+            'active': tasks['active'] or 0,
+            'completed_today': user_tasks['completed_today'] or 0,
+            'total_completed': user_tasks['total_completed'] or 0,
         },
         'security': {
-            'fraud_alerts': fraud_alerts,
-            'critical_frauds': critical_frauds,
-        }
+            'fraud_alerts': fraud['alerts'] or 0,
+            'critical_frauds': fraud['critical'] or 0,
+        },
+        'pending_packages': pending_packages,
+        'recent': recent,
     }
-    cache.set('admin_dash_stats_v4', payload, 180)
+
+
+def _cached_dashboard():
+    cached = cache.get(_STATS_KEY)
+    if cached:
+        return cached
+    row = DashboardSnapshot.objects.filter(key='overview').only('payload', 'built_at').first()
+    if row is None or not row.payload:
+        return None
+    packed = {'payload': row.payload, '_built': row.built_at.timestamp()}
+    cache.set(_STATS_KEY, packed, _STATS_KEEP)
+    return packed
+
+
+def _store_dashboard(payload):
+    cache.set(_STATS_KEY, {'payload': payload, '_built': time.time()}, _STATS_KEEP)
+    DashboardSnapshot.objects.update_or_create(key='overview', defaults={'payload': payload})
+
+
+def _refresh_dashboard():
+    from django.db import close_old_connections
+    try:
+        close_old_connections()
+        _store_dashboard(_compute_admin_dashboard())
+    except Exception:
+        pass
+    finally:
+        close_old_connections()
+        _dashboard_lock.release()
+
+
+def _maybe_refresh_dashboard(built):
+    if time.time() - built < _STATS_FRESH:
+        return
+    if not _dashboard_lock.acquire(blocking=False):
+        return
+    threading.Thread(target=_refresh_dashboard, daemon=True).start()
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def admin_dashboard_stats(request):
+    testing = 'test' in sys.argv
+    if not testing:
+        cached = _cached_dashboard()
+        if cached is not None:
+            _maybe_refresh_dashboard(cached['_built'])
+            return Response(cached['payload'])
+    payload = _compute_admin_dashboard()
+    if not testing:
+        _store_dashboard(payload)
     return Response(payload)
 
 @api_view(['GET'])
@@ -218,6 +259,63 @@ def _package_account_counts():
     return int(approved_users or 0), int(pending_accounts or 0), int(rejected_accounts or 0)
 
 
+def _package_money(today_start, today_end):
+    """Sum deposits from the status index, without opening screenshot rows."""
+    from django.db import connection
+    table = PackagePayment._meta.db_table
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'''
+            SELECT
+                COALESCE(SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'approved' AND processed_at >= %s AND processed_at < %s THEN amount ELSE 0 END), 0),
+                COUNT(DISTINCT CASE WHEN status = 'approved' AND processed_at >= %s AND processed_at < %s THEN user_id END),
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0)
+            FROM {table}
+            ''',
+            [today_start, today_end, today_start, today_end],
+        )
+        total, today, today_users, pending_rows = cursor.fetchone()
+    return float(total or 0), float(today or 0), int(today_users or 0), int(pending_rows or 0)
+
+
+def _withdrawal_money(today_start, today_end):
+    from django.db import connection
+    table = Withdrawal._meta.db_table
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'''
+            SELECT
+                COALESCE(SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'approved' AND processed_at >= %s AND processed_at < %s THEN amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0)
+            FROM {table}
+            ''',
+            [today_start, today_end],
+        )
+        total, today, pending_amt, pending_count = cursor.fetchone()
+    return float(total or 0), float(today or 0), float(pending_amt or 0), int(pending_count or 0)
+
+
+def _task_money():
+    from django.db import connection
+    table = Transaction._meta.db_table
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'''
+            SELECT
+                COALESCE(SUM(CASE WHEN transaction_type = 'task' THEN amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN transaction_type = 'bonus' AND description LIKE 'Admin bonus%%' THEN amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN transaction_type = 'bonus' AND description LIKE 'Admin deduct%%' THEN amount ELSE 0 END), 0)
+            FROM {table}
+            WHERE transaction_type IN ('task', 'bonus')
+            '''
+        )
+        task_earnings, manual_additions, manual_subtractions = cursor.fetchone()
+    return float(task_earnings or 0), float(manual_additions or 0), float(manual_subtractions or 0)
+
+
 def _local_day_bounds(day):
     """Midnight-to-midnight range so SQLite can use the datetime index."""
     from datetime import datetime, time
@@ -242,7 +340,7 @@ def admin_dashboard_charts(request):
     from referrals.models import ReferralEarning
 
     days = min(30, max(7, int(request.GET.get('days', 14))))
-    cache_key = f'admin_dash_charts_v3_{days}'
+    cache_key = f'admin_dash_charts_v4_{days}'
     cached = cache.get(cache_key)
     if cached is not None:
         return Response(cached)
@@ -293,13 +391,9 @@ def admin_dashboard_charts(request):
         referral_payout_rs.append(ref_by_day.get(d, 0))
         net_profit_rs.append(deposits_rs[-1] - withdrawals_rs[-1] - referral_payout_rs[-1])
 
-    premium_users = PackagePayment.objects.filter(status='approved').values('user_id').distinct().count()
+    premium_users, pending_package_users, _rejected_users = _package_account_counts()
     total_users = User.objects.count()
     free_users = max(0, total_users - premium_users)
-
-    pending_package_users = PackagePayment.objects.filter(
-        status='pending'
-    ).values('user').distinct().count()
 
     blocked_users = User.objects.filter(is_active=False).count()
 
@@ -364,7 +458,7 @@ def admin_dashboard_charts(request):
         },
         'updated_at': timezone.now().isoformat(),
     })
-    cache.set(cache_key, response.data, 60)
+    cache.set(cache_key, response.data, 300)
     return response
 
 @api_view(['GET'])

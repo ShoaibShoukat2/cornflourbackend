@@ -34,6 +34,7 @@ class Transaction(models.Model):
         indexes = [
             models.Index(fields=['user', '-created_at']),
             models.Index(fields=['user', 'transaction_type']),
+            models.Index(fields=['transaction_type', 'amount'], name='tx_type_amount_idx'),
         ]
     
     def __str__(self):
@@ -68,6 +69,8 @@ class Withdrawal(models.Model):
         indexes = [
             models.Index(fields=['user', '-created_at']),
             models.Index(fields=['user', 'status']),
+            models.Index(fields=['-created_at'], name='wdr_created_idx'),
+            models.Index(fields=['status', 'processed_at', 'amount'], name='wdr_cover_status_idx'),
         ]
     
     def __str__(self):

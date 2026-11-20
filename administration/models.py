@@ -162,6 +162,7 @@ class PackagePayment(models.Model):
         indexes = [
             models.Index(fields=['status', 'submitted_at']),
             models.Index(fields=['user', 'status']),
+            models.Index(fields=['status', 'processed_at', 'amount', 'user'], name='pkg_cover_status_idx'),
         ]
 
     def __str__(self):
@@ -315,3 +316,14 @@ class AdminActivity(models.Model):
 
     def __str__(self):
         return self.action
+
+
+class DashboardSnapshot(models.Model):
+    """Last admin overview, so the next open is one small read."""
+
+    key = models.CharField(max_length=40, unique=True)
+    payload = models.JSONField(default=dict)
+    built_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.key

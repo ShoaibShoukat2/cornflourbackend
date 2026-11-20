@@ -15,9 +15,12 @@ class AccountsConfig(AppConfig):
                 return
             cursor = connection.cursor()
             cursor.execute('PRAGMA busy_timeout=8000;')
+            cursor.execute('PRAGMA temp_store=MEMORY;')
+            cursor.execute('PRAGMA cache_size=-20000;')
             if 'test' in sys.argv:
                 return
             cursor.execute('PRAGMA journal_mode=WAL;')
             cursor.execute('PRAGMA synchronous=NORMAL;')
+            cursor.execute('PRAGMA mmap_size=134217728;')
 
         connection_created.connect(setup_sqlite, dispatch_uid='instova_sqlite_pragmas')

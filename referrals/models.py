@@ -7,6 +7,12 @@ class ReferralEarning(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     earning_type = models.CharField(max_length=50, default='signup')
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['referrer', 'earning_type']),
+            models.Index(fields=['referrer', 'referred_user']),
+        ]
     
     def __str__(self):
         return f"{self.referrer.username} earned ${self.amount} from {self.referred_user.username}"

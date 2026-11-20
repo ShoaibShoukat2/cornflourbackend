@@ -1,11 +1,12 @@
 """Shared money, team, level, and approval rules."""
 
+import sys
 from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 User = get_user_model()
@@ -38,6 +39,14 @@ PLAN_NAMES = {
 
 def money(value):
     return Decimal(str(value or 0)).quantize(Decimal('0.01'))
+
+
+def clear_site_settings_cache():
+    try:
+        from django.core.cache import cache
+        cache.delete('public_contact_links_v1')
+    except Exception:
+        pass
 
 
 def get_site_settings():
@@ -334,41 +343,79 @@ def level_progress(user, direct_approved=None):
     }
 
 
-def team_summary(user):
+def clear_team_counts(*users):
+    from django.core.cache import cache
+    for person in users:
+        if person is not None and getattr(person, 'pk', None):
+            cache.delete(f'team_counts_v1_{person.pk}')
+
+
+def team_counts(user, max_depth=9):
+    """Count the downline in one SQL pass instead of loading every member."""
+    from django.core.cache import cache
     from administration.models import PackagePayment
 
-    downline = collect_downline(user)
-    ids = [member_id for member_id, _depth in downline]
-    approved_ids = set(
-        PackagePayment.objects.filter(user_id__in=ids, status='approved')
-        .values_list('user_id', flat=True)
-        .distinct()
-    ) if ids else set()
-    direct = sum(1 for member_id, depth in downline if depth == 1 and member_id in approved_ids)
-    indirect = sum(1 for member_id, depth in downline if depth > 1 and member_id in approved_ids)
-    direct_registered = sum(1 for _member_id, depth in downline if depth == 1)
-    indirect_registered = sum(1 for _member_id, depth in downline if depth > 1)
+    cache_key = f'team_counts_v1_{user.pk}'
+    use_cache = 'test' not in sys.argv
+    cached = cache.get(cache_key) if use_cache else None
+    if cached is not None:
+        return cached
+
+    user_table = User._meta.db_table
+    payment_table = PackagePayment._meta.db_table
+    sql = f'''
+        WITH RECURSIVE downline AS (
+            SELECT id, 1 AS depth, CAST(id AS TEXT) AS path
+            FROM {user_table}
+            WHERE referred_by_id = %s
+            UNION ALL
+            SELECT u.id, d.depth + 1, d.path || ',' || CAST(u.id AS TEXT)
+            FROM {user_table} u
+            INNER JOIN downline d ON u.referred_by_id = d.id
+            WHERE d.depth < %s
+              AND instr(',' || d.path || ',', ',' || CAST(u.id AS TEXT) || ',') = 0
+        )
+        SELECT
+            COUNT(DISTINCT CASE WHEN d.depth = 1 THEN d.id END),
+            COUNT(DISTINCT CASE WHEN d.depth > 1 THEN d.id END),
+            COUNT(DISTINCT CASE WHEN d.depth = 1 AND p.id IS NOT NULL THEN d.id END),
+            COUNT(DISTINCT CASE WHEN d.depth > 1 AND p.id IS NOT NULL THEN d.id END)
+        FROM downline d
+        LEFT JOIN {payment_table} p ON p.user_id = d.id AND p.status = 'approved'
+    '''
+    from django.db import connection
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [user.pk, max_depth])
+        direct_registered, indirect_registered, direct, indirect = cursor.fetchone()
+    result = {
+        'direct': int(direct or 0),
+        'indirect': int(indirect or 0),
+        'total': int(direct or 0) + int(indirect or 0),
+        'direct_registered': int(direct_registered or 0),
+        'indirect_registered': int(indirect_registered or 0),
+    }
+    if use_cache:
+        cache.set(cache_key, result, 20)
+    return result
+
+
+def team_summary(user):
     direct_pay, indirect_pay, total_pay = commission_totals(user)
-    return {
-        'direct': direct,
-        'indirect': indirect,
-        'total': direct + indirect,
-        'direct_registered': direct_registered,
-        'indirect_registered': indirect_registered,
+    summary = dict(team_counts(user))
+    summary.update({
         'direct_commission': direct_pay,
         'indirect_commission': indirect_pay,
         'total_commission': total_pay,
-        'approved_ids': approved_ids,
-        'downline': downline,
-    }
+    })
+    return summary
 
 
 def team_member_rows(user, limit=200):
     from administration.models import PackagePayment
     from referrals.models import ReferralEarning
 
-    summary = team_summary(user)
-    depth_map = {member_id: depth for member_id, depth in summary['downline']}
+    downline = collect_downline(user)
+    depth_map = {member_id: depth for member_id, depth in downline}
     ids = list(depth_map.keys())[:limit]
     if not ids:
         return []
@@ -381,6 +428,7 @@ def team_member_rows(user, limit=200):
     )
     for payment in payments:
         latest.setdefault(payment.user_id, payment)
+    approved_ids = set(latest)
 
     earned = {
         row['referred_user_id']: row['total'] or Decimal('0')
@@ -415,7 +463,7 @@ def team_member_rows(user, limit=200):
             'approved_at': payment.processed_at if payment else None,
             'relation': 'direct' if depth == 1 else 'indirect',
             'depth': depth,
-            'status': 'active' if member.id in summary['approved_ids'] else 'pending',
+            'status': 'active' if member.id in approved_ids else 'pending',
         })
     rows.sort(key=lambda row: (row['depth'], row['username'].lower()))
     return rows
@@ -506,6 +554,8 @@ def approve_package(payment_id, note='Approved'):
         buyer = payment.user
         if should_pay:
             pay_package_upline(buyer, payment.amount)
+        ancestors = list(_walk_upline(buyer, 9))
+        transaction.on_commit(lambda: clear_team_counts(buyer, *ancestors))
         notify(
             buyer,
             'Plan approved',
@@ -540,7 +590,7 @@ def reject_package(payment_id, reason='Rejected'):
     return 'ok'
 
 
-def build_dashboard(user):
+def build_dashboard(user, include_team=True):
     from administration.models import PackagePayment
     from tasks.models import UserTask
     from wallet.models import Transaction, Wallet, Withdrawal
@@ -560,26 +610,61 @@ def build_dashboard(user):
         plan['status'] = 'approved'
         plan['package_name'] = active_name
         plan['package_label'] = PLAN_NAMES.get(active_name, active_name)
-        plan['total_paid'] = float(total_verified_paid(user))
         plan['amount'] = float(package_prices().get(active_name, plan.get('amount') or 0))
-    pending_upgrade = PackageUpgrade.objects.filter(user=user, status='pending').first()
+        plan['total_paid'] = float(total_verified_paid(user)) if include_team else plan['amount']
+    pending_upgrade = PackageUpgrade.objects.filter(user=user, status='pending').only('status').first()
     plan['upgrade_status'] = pending_upgrade.status if pending_upgrade else 'none'
-    summary = team_summary(user)
-    progress = level_progress(user, summary['direct'])
-    bonus_total = Transaction.objects.filter(user=user, transaction_type='bonus').aggregate(total=Sum('amount'))['total'] or Decimal('0')
-    withdrawals = Withdrawal.objects.filter(user=user)
-    latest = withdrawals.first()
-    recent = [
-        {
-            'id': tx.id,
-            'reference': f'TX{tx.id:06d}',
-            'transaction_type': tx.transaction_type,
-            'amount': float(tx.amount),
-            'description': tx.description,
-            'created_at': tx.created_at,
+    if include_team:
+        summary = team_counts(user)
+        direct_pay, indirect_pay, total_pay = commission_totals(user)
+        progress = level_progress(user, summary['direct'])
+        bonus_total = Transaction.objects.filter(user=user, transaction_type='bonus').aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        withdrawal_counts = Withdrawal.objects.filter(user=user).aggregate(
+            pending_count=Count('id', filter=Q(status='pending')),
+            approved_count=Count('id', filter=Q(status='approved')),
+            rejected_count=Count('id', filter=Q(status='rejected')),
+        )
+        latest = Withdrawal.objects.filter(user=user).only('id', 'status').first()
+        recent = [
+            {
+                'id': tx.id,
+                'reference': f'TX{tx.id:06d}',
+                'transaction_type': tx.transaction_type,
+                'amount': float(tx.amount),
+                'description': tx.description,
+                'created_at': tx.created_at,
+            }
+            for tx in Transaction.objects.filter(user=user).only(
+                'id', 'transaction_type', 'amount', 'description', 'created_at'
+            )[:8]
+        ]
+        completed_tasks = UserTask.objects.filter(user=user, status='verified').count()
+    else:
+        stored_level = min(int(user.level or 0), 9)
+        summary = {
+            'direct': 0,
+            'indirect': 0,
+            'total': 0,
+            'direct_registered': 0,
+            'indirect_registered': 0,
         }
-        for tx in Transaction.objects.filter(user=user)[:8]
-    ]
+        direct_pay = indirect_pay = total_pay = Decimal('0')
+        bonus_total = Decimal('0')
+        progress = {
+            'current': stored_level,
+            'max_level': 9,
+            'levels_total': 10,
+            'unlocked_levels': list(range(stored_level + 1)),
+            'approved_direct': 0,
+            'next_level': stored_level + 1 if stored_level < 9 else None,
+            'next_level_required': None,
+            'members_remaining': 0,
+            'requirements': level_requirements(),
+        }
+        withdrawal_counts = {'pending_count': 0, 'approved_count': 0, 'rejected_count': 0}
+        latest = None
+        recent = []
+        completed_tasks = 0
     return {
         'plan': plan,
         'wallet': {
@@ -598,23 +683,23 @@ def build_dashboard(user):
             'indirect_registered': summary['indirect_registered'],
         },
         'commissions': {
-            'direct': float(summary['direct_commission']),
-            'indirect': float(summary['indirect_commission']),
-            'total': float(summary['total_commission']),
+            'direct': float(direct_pay),
+            'indirect': float(indirect_pay),
+            'total': float(total_pay),
         },
         'bonuses': {
             'total': float(bonus_total),
         },
         'level': progress,
         'withdrawals': {
-            'pending_count': withdrawals.filter(status='pending').count(),
-            'approved_count': withdrawals.filter(status='approved').count(),
-            'rejected_count': withdrawals.filter(status='rejected').count(),
+            'pending_count': withdrawal_counts['pending_count'] or 0,
+            'approved_count': withdrawal_counts['approved_count'] or 0,
+            'rejected_count': withdrawal_counts['rejected_count'] or 0,
             'latest_status': latest.status if latest else 'none',
             'latest_reference': f'WD{latest.id:06d}' if latest else '',
         },
         'stats': {
-            'completed_tasks': UserTask.objects.filter(user=user, status='verified').count(),
+            'completed_tasks': completed_tasks,
         },
         'recent_transactions': recent,
     }

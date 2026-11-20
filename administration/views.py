@@ -431,26 +431,32 @@ def update_site_settings(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def public_contact_links(request):
-    settings, _ = SiteSettings.objects.get_or_create(id=1)
-    return Response({
-        'whatsapp_channel_link': settings.whatsapp_channel_link,
-        'whatsapp_community_link': settings.whatsapp_community_link,
-        'support_phone': settings.support_phone,
-        'contact_admin_name': settings.contact_admin_name,
-        'contact_admin_purpose': settings.contact_admin_purpose,
-        'contact_instructions': settings.contact_instructions,
-        'whatsapp_contact_number': settings.whatsapp_contact_number,
-        'botim_contact_number': settings.botim_contact_number,
-        'botim_contact_link': settings.botim_contact_link,
-        'whatsapp_icon': settings.whatsapp_icon,
-        'botim_icon': settings.botim_icon,
-        'whatsapp_channel_name': settings.whatsapp_channel_name,
-        'whatsapp_channel_purpose': settings.whatsapp_channel_purpose,
-        'whatsapp_channel_icon': settings.whatsapp_channel_icon,
-        'whatsapp_community_name': settings.whatsapp_community_name,
-        'whatsapp_community_purpose': settings.whatsapp_community_purpose,
-        'whatsapp_community_icon': settings.whatsapp_community_icon,
-    })
+    cached = cache.get('public_contact_links_v1')
+    if cached is not None:
+        return Response(cached)
+    if not SiteSettings.objects.filter(id=1).exists():
+        SiteSettings.objects.get_or_create(id=1)
+    payload = SiteSettings.objects.filter(id=1).values(
+        'whatsapp_channel_link',
+        'whatsapp_community_link',
+        'support_phone',
+        'contact_admin_name',
+        'contact_admin_purpose',
+        'contact_instructions',
+        'whatsapp_contact_number',
+        'botim_contact_number',
+        'botim_contact_link',
+        'whatsapp_icon',
+        'botim_icon',
+        'whatsapp_channel_name',
+        'whatsapp_channel_purpose',
+        'whatsapp_channel_icon',
+        'whatsapp_community_name',
+        'whatsapp_community_purpose',
+        'whatsapp_community_icon',
+    ).first() or {}
+    cache.set('public_contact_links_v1', payload, 120)
+    return Response(payload)
 
 @api_view(['GET'])
 @permission_classes([IsAdminUser])

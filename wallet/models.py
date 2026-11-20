@@ -31,6 +31,10 @@ class Transaction(models.Model):
     
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'transaction_type']),
+        ]
     
     def __str__(self):
         return f"{self.user.username} - {self.transaction_type} - ${self.amount}"
@@ -61,6 +65,10 @@ class Withdrawal(models.Model):
     
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'status']),
+        ]
     
     def __str__(self):
         return f"{self.user.username} - ${self.amount} - {self.status}"

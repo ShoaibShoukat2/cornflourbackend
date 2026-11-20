@@ -73,16 +73,13 @@ def task_list(request):
 
     daily_limit = get_daily_task_limit(request.user)
     today = date.today()
-    completed_today = UserTask.objects.filter(
-        user=request.user, status='verified',
-        completed_at__date=today
-    ).count()
 
     tasks = Task.objects.filter(is_active=True).order_by('id')
     done_ids = set(
         UserTask.objects.filter(user=request.user, status='verified', date=today)
         .values_list('task_id', flat=True)
     )
+    completed_today = len(done_ids)
     serializer = TaskSerializer(tasks, many=True, context={'request': request, 'done_ids': done_ids})
     data = serializer.data
 

@@ -280,8 +280,19 @@ def reset_password(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def dashboard_stats(request):
-    data = build_dashboard(request.user)
-    data['user'] = UserSerializer(request.user, context={'omit_picture': True}).data
+    home = str(request.query_params.get('scope', '')) == 'home'
+    data = build_dashboard(request.user, include_team=not home)
+    if home:
+        data['user'] = {
+            'id': request.user.id,
+            'username': request.user.username,
+            'email': request.user.email,
+            'level': request.user.level,
+            'is_staff': request.user.is_staff,
+            'has_package': data['plan']['status'] == 'approved',
+        }
+    else:
+        data['user'] = UserSerializer(request.user, context={'omit_picture': True}).data
     data['stats']['total_referrals'] = data['team']['direct']
     data['stats']['referral_earnings'] = data['commissions']['total']
     return Response(data)
@@ -291,9 +302,14 @@ def dashboard_stats(request):
 @permission_classes([IsAuthenticated])
 def notifications_list(request):
     from .models import Notification
-    notes = Notification.objects.filter(user=request.user)[:50]
+    unread = Notification.objects.filter(user=request.user, is_read=False).count()
+    if str(request.query_params.get('summary', '')) == '1':
+        return Response({'unread': unread})
+    notes = Notification.objects.filter(user=request.user).only(
+        'id', 'title', 'message', 'category', 'is_read', 'created_at'
+    )[:50]
     return Response({
-        'unread': Notification.objects.filter(user=request.user, is_read=False).count(),
+        'unread': unread,
         'notifications': [
             {
                 'id': note.id,

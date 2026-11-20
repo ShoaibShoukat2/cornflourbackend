@@ -21,7 +21,15 @@ class HideScreenshotManager(models.Manager):
 
 class SiteSettingsManager(models.Manager):
     def get_queryset(self):
-        return super().get_queryset().defer('terms_sections')
+        # Icon uploads and the terms document are large. Ordinary reads
+        # (wallet, tasks, dashboard) must not pull them off disk.
+        return super().get_queryset().defer(
+            'terms_sections',
+            'whatsapp_icon',
+            'botim_icon',
+            'whatsapp_channel_icon',
+            'whatsapp_community_icon',
+        )
 
 
 class SiteSettings(models.Model):

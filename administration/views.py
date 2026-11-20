@@ -19,7 +19,7 @@ User = get_user_model()
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def admin_dashboard_stats(request):
-    cached = cache.get('admin_dash_stats_v3')
+    cached = cache.get('admin_dash_stats_v4')
     if cached is not None:
         return Response(cached)
     today_start, today_end = _local_day_bounds(date.today())
@@ -33,15 +33,7 @@ def admin_dashboard_stats(request):
         inactive=Count('id', filter=Q(is_active=False) | Q(is_blocked=True)),
         team=Count('id', filter=Q(is_staff=False)),
     )
-    approved_users = PackagePayment.objects.filter(status='approved').values('user_id').distinct().count()
-    pending_accounts = PackagePayment.objects.filter(status='pending').values('user_id').distinct().count()
-    rejected_accounts = (
-        PackagePayment.objects.filter(status='rejected')
-        .exclude(user_id__in=PackagePayment.objects.filter(status='approved').values('user_id'))
-        .values('user_id')
-        .distinct()
-        .count()
-    )
+    approved_users, pending_accounts, rejected_accounts = _package_account_counts()
 
     packages = PackagePayment.objects.aggregate(
         total_deposited=Sum('amount', filter=Q(status='approved')),
@@ -143,7 +135,7 @@ def admin_dashboard_stats(request):
             'critical_frauds': critical_frauds,
         }
     }
-    cache.set('admin_dash_stats_v3', payload, 90)
+    cache.set('admin_dash_stats_v4', payload, 180)
     return Response(payload)
 
 @api_view(['GET'])
@@ -194,6 +186,36 @@ def analytics_chart(request):
 def _wallet_to_rs(amount):
     """Wallet amounts are stored in units; display as Rs (×100)."""
     return float(amount or 0) * 100
+
+
+def _package_account_counts():
+    """One index pass for approved, pending, and rejected member counts.
+
+    The old rejected count used NOT IN against every approved payment, which
+    made the overview wait on the screenshot table.
+    """
+    from django.db import connection
+    table = PackagePayment._meta.db_table
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'''
+            SELECT
+                COALESCE(SUM(approved), 0),
+                COALESCE(SUM(pending), 0),
+                COALESCE(SUM(CASE WHEN approved = 0 AND rejected = 1 THEN 1 ELSE 0 END), 0)
+            FROM (
+                SELECT
+                    user_id,
+                    MAX(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                    MAX(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                    MAX(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected
+                FROM {table}
+                GROUP BY user_id
+            ) AS account_flags
+            '''
+        )
+        approved_users, pending_accounts, rejected_accounts = cursor.fetchone()
+    return int(approved_users or 0), int(pending_accounts or 0), int(rejected_accounts or 0)
 
 
 def _local_day_bounds(day):

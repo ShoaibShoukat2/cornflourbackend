@@ -104,9 +104,10 @@ def logout(request):
 @permission_classes([IsAuthenticated])
 def profile(request):
     from referrals.services import level_progress
-    # Level math is a small count. The photo is loaded only when the client asks for it.
-    level_progress(request.user)
-    request.user.refresh_from_db(fields=['level', 'level_bonus_paid'])
+    # Staff overview must not wait on team-level math.
+    if not request.user.is_staff:
+        level_progress(request.user)
+        request.user.refresh_from_db(fields=['level', 'level_bonus_paid'])
     lite = str(request.query_params.get('lite', '')) == '1'
     return Response(UserSerializer(request.user, context={'omit_picture': lite}).data)
 
